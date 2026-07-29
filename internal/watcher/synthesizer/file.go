@@ -211,7 +211,7 @@ func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) []
 			}
 		}
 	}
-	if provider == "qoder" {
+	if provider == "qoder" || provider == "qoder-cn" {
 		// Deserialize the on-disk JSON directly into the storage struct so
 		// every persisted field — including the cached model_configs map
 		// written by SaveTokenToFile — survives restarts and hot-reloads.
@@ -222,7 +222,7 @@ func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) []
 		var storage qoderauth.QoderTokenStorage
 		if errStorage := json.Unmarshal(data, &storage); errStorage == nil {
 			if storage.Type == "" {
-				storage.Type = "qoder"
+				storage.Type = provider
 			}
 			a.Storage = &storage
 		}

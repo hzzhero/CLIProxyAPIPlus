@@ -316,6 +316,8 @@ func GetStaticModelDefinitionsByChannel(channel string) []*ModelInfo {
 		return GetXAIModels()
 	case "qoder":
 		return GetQoderModels()
+	case "qoder-cn":
+		return GetQoderCNModels()
 	default:
 		return nil
 	}
@@ -873,4 +875,23 @@ func GetAmazonQModels() []*ModelInfo {
 // GetQoderModels returns the Qoder model definitions.
 func GetQoderModels() []*ModelInfo {
 	return cloneModelInfos(getModels().Qoder)
+}
+
+// GetQoderCNModels returns Qoder model definitions namespaced under qoder-cn/.
+// CN shares the same upstream model set as the international edition; only the
+// ID prefix, OwnedBy, and Type differ so the model registry and routing layer
+// can distinguish CN traffic from international traffic. The base slice is
+// deep-cloned first so mutating the prefix fields cannot corrupt the shared
+// static set returned by GetQoderModels.
+func GetQoderCNModels() []*ModelInfo {
+	base := cloneModelInfos(getModels().Qoder)
+	for _, m := range base {
+		if m == nil {
+			continue
+		}
+		m.ID = "qoder-cn/" + m.ID
+		m.OwnedBy = "qoder-cn"
+		m.Type = "qoder-cn"
+	}
+	return base
 }

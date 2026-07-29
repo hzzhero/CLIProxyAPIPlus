@@ -106,6 +106,7 @@ type commandModeOptions struct {
 	kiroIDCLogin       bool
 	xaiLogin           bool
 	qoderLogin         bool
+	qoderCNLogin       bool
 }
 
 func isOneShotCommandMode(opts commandModeOptions) bool {
@@ -872,6 +873,8 @@ func main() {
 		cmd.DoXAILogin(cfg, options)
 	} else if qoderLogin {
 		cmd.DoQoderLogin(cfg, options)
+	} else if qoderCNLogin {
+		cmd.DoQoderCNLogin(cfg, options)
 	} else {
 		// In cloud deploy mode without config file, just wait for shutdown signals
 		if isCloudDeploy && !configFileExists {

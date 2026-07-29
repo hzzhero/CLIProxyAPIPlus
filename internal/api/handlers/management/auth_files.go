@@ -609,8 +609,10 @@ func (h *Handler) buildAuthFileEntry(auth *coreauth.Auth) gin.H {
 			}
 		}
 	}
-	// Expose Qoder credit usage if available.
-	if auth.Provider == "qoder" {
+	// Expose Qoder credit usage if available (applies to both the
+	// international "qoder" and China "qoder-cn" providers — both cache
+	// usage in QoderTokenStorage via FetchQoderUsage).
+	if auth.Provider == "qoder" || auth.Provider == "qoder-cn" {
 		if storage, ok := auth.Storage.(*qoderauth.QoderTokenStorage); ok && storage != nil && storage.GetUsageInfo() != nil {
 			u := storage.GetUsageInfo()
 			entry["usage"] = gin.H{

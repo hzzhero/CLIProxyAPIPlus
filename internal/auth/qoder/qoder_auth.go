@@ -132,12 +132,22 @@ type UserInfoResponse struct {
 // QoderAuth manages authentication and token handling for the Qoder API
 type QoderAuth struct {
 	httpClient *http.Client
+	endpoints  Endpoints
 }
 
-// NewQoderAuth creates a new QoderAuth instance with a proxy-configured HTTP client
+// NewQoderAuth creates a new QoderAuth instance for the international
+// (qoder.sh) edition with a proxy-configured HTTP client.
 func NewQoderAuth(cfg *config.Config) *QoderAuth {
+	return NewQoderAuthForProvider(cfg, "qoder")
+}
+
+// NewQoderAuthForProvider creates a QoderAuth instance bound to the endpoint
+// set of the given provider key ("qoder" for global, "qoder-cn" for China).
+// COSY signing is region-agnostic; only the URLs differ.
+func NewQoderAuthForProvider(cfg *config.Config, provider string) *QoderAuth {
 	return &QoderAuth{
 		httpClient: util.SetProxy(&cfg.SDKConfig, &http.Client{}),
+		endpoints:  EndpointsForProvider(provider),
 	}
 }
 
@@ -154,7 +164,7 @@ func (qa *QoderAuth) InitiateDeviceFlow(ctx context.Context) (*DeviceFlowRespons
 
 	verificationURI := fmt.Sprintf(
 		"%s?challenge=%s&challenge_method=S256&machine_id=%s&nonce=%s",
-		QoderLoginURL,
+		qa.endpoints.LoginURL,
 		codeChallenge,
 		machineID,
 		nonce,
@@ -176,7 +186,7 @@ func (qa *QoderAuth) PollForToken(ctx context.Context, deviceFlow *DeviceFlowRes
 
 	pollURL := fmt.Sprintf(
 		"%s?nonce=%s&verifier=%s&challenge_method=S256",
-		QoderOAuthTokenEndpoint,
+		qa.endpoints.OAuthTokenEndpoint,
 		url.QueryEscape(deviceFlow.Nonce),
 		url.QueryEscape(deviceFlow.CodeVerifier),
 	)
@@ -277,7 +287,7 @@ func (qa *QoderAuth) RefreshTokens(ctx context.Context, accessToken, refreshToke
 		return nil, fmt.Errorf("failed to marshal refresh request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", QoderRefreshTokenEndpoint, strings.NewReader(string(bodyBytes)))
+	req, err := http.NewRequestWithContext(ctx, "POST", qa.endpoints.RefreshTokenEndpoint, strings.NewReader(string(bodyBytes)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create refresh request: %w", err)
 	}
@@ -327,7 +337,7 @@ func (qa *QoderAuth) RefreshTokens(ctx context.Context, accessToken, refreshToke
 
 // FetchUserInfo fetches user information from the API
 func (qa *QoderAuth) FetchUserInfo(ctx context.Context, accessToken string) (name, email string, err error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", QoderUserInfoEndpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", qa.endpoints.UserInfoEndpoint, nil)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to create user info request: %w", err)
 	}
@@ -365,6 +375,51 @@ func (qa *QoderAuth) FetchUserInfo(ctx context.Context, accessToken string) (nam
 	return name, email, nil
 }
 
+// FetchUserInfoFull fetches user information including the account ID.
+// It mirrors FetchUserInfo but also returns the user ID, which CN login needs
+// because the jobToken/exchange response does not include it (unlike the
+// device-flow poll response). The international device flow already obtains
+// UserID from the poll response, so it does not need this method.
+func (qa *QoderAuth) FetchUserInfoFull(ctx context.Context, accessToken string) (userID, name, email string, err error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", qa.endpoints.UserInfoEndpoint, nil)
+	if err != nil {
+		return "", "", "", fmt.Errorf("failed to create user info request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "Go-http-client/2.0")
+
+	resp, err := qa.httpClient.Do(req)
+	if err != nil {
+		return "", "", "", fmt.Errorf("user info request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", "", "", fmt.Errorf("failed to read user info response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", "", "", fmt.Errorf("user info request failed: %d %s", resp.StatusCode, resp.Status)
+	}
+
+	var response UserInfoResponse
+	if err = json.Unmarshal(body, &response); err != nil {
+		return "", "", "", fmt.Errorf("failed to parse user info response: %w", err)
+	}
+
+	userID = strings.TrimSpace(response.ID)
+	name = strings.TrimSpace(response.Name)
+	if name == "" {
+		name = strings.TrimSpace(response.Username)
+	}
+	email = strings.TrimSpace(response.Email)
+
+	return userID, name, email, nil
+}
+
 // SaveUserInfo stores the user info alongside auth metadata for later use.
 // This mirrors the behavior in qoder-direct.py where user_id is persisted
 // and userinfo fields are updated if available.
@@ -385,6 +440,123 @@ func (qa *QoderAuth) SaveUserInfo(ctx context.Context, accessToken, userID, name
 	}
 
 	return name, email
+}
+
+// JobTokenExchangeResponse mirrors the /api/v1/jobToken/exchange success
+// payload. The endpoint does not require a COSY signature — only the PAT in
+// the request body. Fields mirror the device-flow poll response:
+//
+//	{"token":"jt-...", "refresh_token":"jrt-...", "expires_at":"<RFC3339>", "expires_in":<ms>}
+//
+// Note: expires_in from this endpoint is in milliseconds (observed), unlike
+// the device-flow poll response where it is in seconds.
+type JobTokenExchangeResponse struct {
+	Token        string `json:"token"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresAt    string `json:"expires_at"`
+	ExpiresIn    int64  `json:"expires_in"`
+}
+
+// ExchangeJobToken exchanges a Qoder CN Personal Access Token (pt-...) for a
+// short-lived job token (jt-...) via POST {openapi}/api/v1/jobToken/exchange.
+// PATs cannot authenticate API calls directly; they must first be exchanged.
+// This mirrors the official qoderclicn flow and the simonsmh/pi-provider-qoder
+// reference implementation. The exchange endpoint does not require a COSY
+// signature. Returns a QoderTokenData with AccessToken/RefreshToken/ExpireTime
+// populated (UserID is resolved separately via FetchUserInfo by the caller).
+func (qa *QoderAuth) ExchangeJobToken(ctx context.Context, personalToken string) (*QoderTokenData, error) {
+	personalToken = strings.TrimSpace(personalToken)
+	if personalToken == "" {
+		return nil, fmt.Errorf("qoder: personal access token is empty")
+	}
+	if qa.endpoints.JobTokenExchangeURL == "" {
+		return nil, fmt.Errorf("qoder: job token exchange endpoint not configured for this region (CN only)")
+	}
+
+	reqBody := map[string]string{
+		"personal_token": personalToken,
+	}
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal job token exchange request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", qa.endpoints.JobTokenExchangeURL, strings.NewReader(string(bodyBytes)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create job token exchange request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "Go-http-client/2.0")
+	// The exchange endpoint expects these Cosy-* informational headers but
+	// does not validate a full COSY signature. Values match the reference
+	// implementation (pi-provider-qoder pat.ts).
+	req.Header.Set("Cosy-Version", "1.0.1")
+	req.Header.Set("Cosy-ClientType", QoderClientType)
+
+	resp, err := qa.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("job token exchange request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read job token exchange response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		var errorData map[string]interface{}
+		if err = json.Unmarshal(body, &errorData); err == nil {
+			if errMsg, ok := errorData["message"].(string); ok && errMsg != "" {
+				return nil, fmt.Errorf("job token exchange failed: %s", errMsg)
+			}
+		}
+		return nil, fmt.Errorf("job token exchange failed: %d %s. Response: %s", resp.StatusCode, resp.Status, truncateBody(body, 500))
+	}
+
+	var response JobTokenExchangeResponse
+	if err = json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("failed to parse job token exchange response: %w", err)
+	}
+	if strings.TrimSpace(response.Token) == "" {
+		return nil, fmt.Errorf("job token exchange returned empty job token; raw response keys may have changed")
+	}
+
+	expireMs := qa.parseJobTokenExpiry(response.ExpiresAt, response.ExpiresIn)
+
+	return &QoderTokenData{
+		AccessToken:  response.Token,
+		RefreshToken: response.RefreshToken,
+		ExpireTime:   expireMs,
+	}, nil
+}
+
+// parseJobTokenExpiry resolves the expiry timestamp (Unix milliseconds) from
+// the /api/v1/jobToken/exchange response. expires_at (RFC3339) wins; otherwise
+// expires_in is treated as milliseconds-from-now (observed API behavior, which
+// differs from the device-flow poll where expires_in is seconds). Defaults to
+// now+24h when neither field is present, matching the observed job-token
+// lifetime.
+func (qa *QoderAuth) parseJobTokenExpiry(expiresAt string, expiresInMs int64) int64 {
+	expiresAt = strings.TrimSpace(expiresAt)
+	if expiresAt != "" {
+		if t, err := time.Parse(time.RFC3339, expiresAt); err == nil {
+			return t.UnixMilli()
+		}
+	}
+	if expiresInMs > 0 {
+		return time.Now().Add(time.Duration(expiresInMs) * time.Millisecond).UnixMilli()
+	}
+	return time.Now().Add(24 * time.Hour).UnixMilli()
+}
+
+// truncateBody trims a response body for inclusion in error messages.
+func truncateBody(body []byte, n int) string {
+	if len(body) <= n {
+		return string(body)
+	}
+	return string(body[:n]) + "..."
 }
 
 // CreateTokenStorage creates a QoderTokenStorage object from a QoderTokenData object

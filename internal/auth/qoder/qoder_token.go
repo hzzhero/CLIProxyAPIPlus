@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,6 +38,10 @@ type QoderTokenStorage struct {
 	MachineToken string `json:"machine_token,omitempty"`
 	// MachineType is the type of machine registration.
 	MachineType string `json:"machine_type,omitempty"`
+	// PersonalToken is the Qoder CN Personal Access Token (pt-...) used to
+	// re-exchange short-lived job tokens when they expire. Only populated for
+	// qoder-cn auth records; empty for the international device-flow provider.
+	PersonalToken string `json:"personal_token,omitempty"`
 	// ModelConfigs caches the raw upstream model_config entries from the most
 	// recent /algo/api/v2/model/list response, keyed by model id (e.g.
 	// "dfmodel" -> {"key":"dfmodel","format":"openai","is_vl":true, ...}).
@@ -173,7 +178,11 @@ func (ts *QoderTokenStorage) ModelConfigKeys() []string {
 //   - error: An error if the operation fails, nil otherwise
 func (ts *QoderTokenStorage) SaveTokenToFile(authFilePath string) error {
 	misc.LogSavingCredentials(authFilePath)
-	ts.Type = "qoder"
+	// Only default the type when unset so qoder-cn records keep their
+	// "qoder-cn" type instead of being overwritten with "qoder".
+	if strings.TrimSpace(ts.Type) == "" {
+		ts.Type = "qoder"
+	}
 
 	if err := os.MkdirAll(filepath.Dir(authFilePath), 0700); err != nil {
 		return fmt.Errorf("failed to create directory: %v", err)

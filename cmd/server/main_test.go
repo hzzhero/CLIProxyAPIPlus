@@ -119,6 +119,7 @@ func TestIsOneShotCommandMode(t *testing.T) {
 		{name: "kiro idc login", opts: commandModeOptions{kiroIDCLogin: true}, want: true},
 		{name: "xai login", opts: commandModeOptions{xaiLogin: true}, want: true},
 		{name: "qoder login", opts: commandModeOptions{qoderLogin: true}, want: true},
+		{name: "qoder-cn login", opts: commandModeOptions{qoderCNLogin: true}, want: true},
 	}
 
 	for _, tt := range tests {

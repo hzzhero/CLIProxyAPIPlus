@@ -348,12 +348,12 @@ func (s *FileTokenStore) readAuthFiles(path, baseDir string) ([]*cliproxyauth.Au
 	if email, ok := metadata["email"].(string); ok && email != "" {
 		auth.Attributes["email"] = email
 	}
-	if provider == "qoder" {
+	if provider == "qoder" || provider == "qoder-cn" {
 		var storage qoderauth.QoderTokenStorage
 		if raw, errMarshal := json.Marshal(metadata); errMarshal == nil {
 			if errUnmarshal := json.Unmarshal(raw, &storage); errUnmarshal == nil {
 				if strings.TrimSpace(storage.Type) == "" {
-					storage.Type = "qoder"
+					storage.Type = provider
 				}
 				auth.Storage = &storage
 			}

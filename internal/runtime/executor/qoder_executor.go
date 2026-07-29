@@ -27,21 +27,42 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// QoderExecutor executes requests against the Qoder API with COSY authentication
+// QoderExecutor executes requests against the Qoder API with COSY authentication.
+// The providerKey field selects the endpoint set: "qoder" routes to the
+// international (qoder.sh) hosts, "qoder-cn" routes to the China
+// (qoder.com.cn) hosts. COSY signing is region-agnostic.
 type QoderExecutor struct {
-	cfg *config.Config
+	cfg         *config.Config
+	providerKey string
 }
 
-// NewQoderExecutor creates a new Qoder executor
+// NewQoderExecutor creates a new Qoder executor for the international edition.
 func NewQoderExecutor(cfg *config.Config) *QoderExecutor {
 	return &QoderExecutor{
-		cfg: cfg,
+		cfg:         cfg,
+		providerKey: "qoder",
 	}
 }
 
-// Identifier returns the provider identifier
+// NewQoderCNExecutor creates a new Qoder executor for the China edition.
+// CN routes to gateway.qoder.com.cn / openapi.qoder.com.cn and uses PAT-derived
+// job tokens instead of the device-flow access tokens used by the international
+// edition.
+func NewQoderCNExecutor(cfg *config.Config) *QoderExecutor {
+	return &QoderExecutor{
+		cfg:         cfg,
+		providerKey: "qoder-cn",
+	}
+}
+
+// Identifier returns the provider identifier.
 func (e *QoderExecutor) Identifier() string {
-	return "qoder"
+	return e.providerKey
+}
+
+// endpoints returns the region-specific URL set for this executor's provider.
+func (e *QoderExecutor) endpoints() qoderauth.Endpoints {
+	return qoderauth.EndpointsForProvider(e.providerKey)
 }
 
 // ExecuteStream executes a streaming request against Qoder API
@@ -49,7 +70,7 @@ func (e *QoderExecutor) ExecuteStream(ctx context.Context, authRecord *cliproxya
 	// Get token storage from auth record
 	storage, ok := authRecord.Storage.(*qoderauth.QoderTokenStorage)
 	if !ok {
-		return nil, fmt.Errorf("invalid auth storage type for qoder: %T", authRecord.Storage)
+		return nil, fmt.Errorf("invalid auth storage type for %s: %T", e.providerKey, authRecord.Storage)
 	}
 
 	// Note: Qoder device tokens are long-lived (~30 days) and the upstream
@@ -71,14 +92,19 @@ func (e *QoderExecutor) ExecuteStream(ctx context.Context, authRecord *cliproxya
 		return nil, fmt.Errorf("failed to parse request: %w", err)
 	}
 
-	// Map model name — strip provider prefix so qoder/auto → auto
+	// Map model name — strip provider prefix so qoder/auto and qoder-cn/auto → auto.
+	// Try the executor's own provider prefix first, then fall back to "qoder/"
+	// so historical aliases still resolve when a CN request lands on this executor.
 	model, _ := chatReq["model"].(string)
-	qoderModel := strings.TrimPrefix(model, "qoder/")
+	qoderModel := strings.TrimPrefix(model, e.providerKey+"/")
+	if qoderModel == model {
+		qoderModel = strings.TrimPrefix(model, "qoder/")
+	}
 	if mapped, ok := qoderauth.ModelMap[qoderModel]; ok {
 		qoderModel = mapped
 	} else if _, cached := storage.GetModelConfig(qoderModel); !cached {
 		// Not in static map and not in dynamic model cache — reject early.
-		return nil, fmt.Errorf("unsupported qoder model: %q (received %q)", qoderModel, model)
+		return nil, fmt.Errorf("unsupported %s model: %q (received %q)", e.providerKey, qoderModel, model)
 	}
 	reporter := helps.NewExecutorUsageReporter(ctx, e, qoderModel, authRecord)
 	defer reporter.TrackFailure(ctx, &err)
@@ -107,9 +133,11 @@ func (e *QoderExecutor) ExecuteStream(ctx context.Context, authRecord *cliproxya
 	lastUser := lastUserText(normalized)
 
 	// Stable IDs derived from content so retries hit upstream caches.
-	// session_id is stable per user+model (routing affinity).
+	// session_id is stable per user+model (routing affinity). Salt with the
+	// provider key so qoder and qoder-cn sessions don't collide on the same
+	// upstream account id+model pair.
 	// chat_record_id is deterministic per payload (dedup/cache key).
-	sessionID := stableHash("qoder-session", storage.UserID, qoderModel)
+	sessionID := stableHash(e.providerKey+"-session", storage.UserID, qoderModel)
 	recordID := stableChatRecordID(qoderModel, normalized, toolsRaw, int(maxOutputTokens))
 
 	// Start with the model's maximum output tokens, then clamp to
@@ -190,7 +218,7 @@ func (e *QoderExecutor) ExecuteStream(ctx context.Context, authRecord *cliproxya
 
 	headers, err := qoderauth.BuildAuthHeaders(
 		encodedBytes,
-		qoderauth.QoderChatURLEncoded,
+		e.endpoints().ChatURLEncoded,
 		qoderauth.CosyCredentials{
 			UserID:    storage.UserID,
 			AuthToken: storage.Token,
@@ -203,7 +231,7 @@ func (e *QoderExecutor) ExecuteStream(ctx context.Context, authRecord *cliproxya
 		return nil, fmt.Errorf("failed to build COSY auth: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", qoderauth.QoderChatURLEncoded, bytes.NewReader(encodedBytes))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", e.endpoints().ChatURLEncoded, bytes.NewReader(encodedBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -236,7 +264,7 @@ func (e *QoderExecutor) ExecuteStream(ctx context.Context, authRecord *cliproxya
 		server := httpResp.Header.Get("Server")
 		bodyPreview := truncate(string(body), 500)
 		log.WithFields(log.Fields{
-			"url":            qoderauth.QoderChatURL,
+			"url":            e.endpoints().ChatURL,
 			"server":         server,
 			"content_type":   httpResp.Header.Get("Content-Type"),
 			"x_request_id":   httpResp.Header.Get("X-Request-Id"),
@@ -244,7 +272,7 @@ func (e *QoderExecutor) ExecuteStream(ctx context.Context, authRecord *cliproxya
 			"x_oss_request":  httpResp.Header.Get("X-Oss-Request-Id"),
 			"allow":          allow,
 			"body_truncated": bodyPreview,
-		}).Warnf("qoder: upstream %d allow=%q server=%q body=%q", httpResp.StatusCode, allow, server, bodyPreview)
+		}).Warnf("%s: upstream %d allow=%q server=%q body=%q", e.providerKey, httpResp.StatusCode, allow, server, bodyPreview)
 		return nil, newQoderStatusError(httpResp.StatusCode, string(body))
 	}
 
@@ -730,32 +758,83 @@ func (e *QoderExecutor) Execute(ctx context.Context, authRecord *cliproxyauth.Au
 	}, nil
 }
 
-// Refresh is a no-op for Qoder.
+// Refresh handles token refresh for Qoder providers.
 //
-// Qoder's device-flow token (the "dt-..." string) is already long-lived
-// (~30 days for the access token, ~360 days for the refresh token per
-// the deviceToken/poll response). The upstream does not expose the
+// International edition ("qoder"): no-op. The device-flow token ("dt-...") is
+// already long-lived (~30 days for the access token, ~360 days for the refresh
+// token per the deviceToken/poll response). The upstream does not expose the
 // classic OAuth refresh dance — every endpoint we've observed (cubk1's
-// qoder2api, Veria, the official @qoder-ai/qodercli) either skips
-// refresh entirely or routes through a different /jobToken exchange
-// flow that requires personalToken (we don't have one).
+// qoder2api, Veria, the official @qoder-ai/qodercli) either skips refresh
+// entirely or routes through a different /jobToken exchange flow that requires
+// a personalToken (we don't have one). Hitting /algo/api/v3/user/refresh_token
+// with our device token returns 403 "Forbidden". Mark the auth refreshed-now
+// and keep going; if a real expiry happens the user re-runs --qoder-login.
 //
-// Hitting /algo/api/v3/user/refresh_token with our device token returns
-// 403 "Forbidden" / errorCode=Forbidden — the endpoint is not for our
-// flow. Mark the auth refreshed-now and keep going; if a real expiry
-// happens the user re-runs --qoder-login.
+// China edition ("qoder-cn"): re-exchanges the persisted Personal Access Token
+// (pt-...) for a fresh short-lived job token (~24h) via
+// POST {openapi}/api/v1/jobToken/exchange. The PAT is stored alongside the
+// job token at login time (QoderTokenStorage.PersonalToken). Without a PAT we
+// cannot refresh — return the auth unchanged and let the next request fail
+// with a 401, surfacing the need to re-run --qoder-cn-login.
+//
+// The conductor calls this before expiry (RefreshLead=1h for CN) and persists
+// the returned auth via Manager.Update, so this method must NOT call
+// SaveTokenToFile itself.
 func (e *QoderExecutor) Refresh(ctx context.Context, auth *cliproxyauth.Auth) (*cliproxyauth.Auth, error) {
 	if auth == nil {
 		return nil, fmt.Errorf("qoder executor: auth is nil")
 	}
-	return auth, nil
+
+	// International device-flow provider: no-op (see comment above).
+	if e.providerKey != "qoder-cn" {
+		return auth, nil
+	}
+
+	storage, ok := auth.Storage.(*qoderauth.QoderTokenStorage)
+	if !ok || storage == nil {
+		return auth, nil
+	}
+	if strings.TrimSpace(storage.PersonalToken) == "" {
+		// No PAT persisted — cannot re-exchange. Leave the auth as-is so the
+		// next request surfaces the expiry; the user must re-run
+		// --qoder-cn-login to supply a fresh PAT.
+		log.Warn("qoder-cn: refresh skipped — no personal access token persisted; re-run --qoder-cn-login")
+		return auth, nil
+	}
+
+	authSvc := qoderauth.NewQoderAuthForProvider(e.cfg, "qoder-cn")
+	tokenData, err := authSvc.ExchangeJobToken(ctx, storage.PersonalToken)
+	if err != nil {
+		return nil, fmt.Errorf("qoder-cn refresh: exchange job token: %w", err)
+	}
+
+	// Auth.Clone() performs a shallow copy of the Storage interface field
+	// (types.go Auth.Clone), so we construct a fresh *QoderTokenStorage to
+	// avoid racing concurrent ExecuteStream reads on the same struct.
+	cp := *storage
+	cp.Token = tokenData.AccessToken
+	cp.RefreshToken = tokenData.RefreshToken
+	cp.ExpireTime = tokenData.ExpireTime
+	cp.LastRefresh = time.Now().Format(time.RFC3339)
+
+	updated := auth.Clone()
+	updated.Storage = &cp
+	if updated.Metadata == nil {
+		updated.Metadata = map[string]any{}
+	}
+	// ExpirationTime() reads expires_at from Metadata (not the storage struct),
+	// so the next refresh must be scheduled against the new expiry.
+	updated.Metadata["expires_at"] = time.UnixMilli(tokenData.ExpireTime).UTC().Format(time.RFC3339)
+
+	log.Infof("qoder-cn: refreshed job token (expires_at=%s)", updated.Metadata["expires_at"])
+	return updated, nil
 }
 
 // HttpRequest injects Qoder COSY authentication into the HTTP request and executes it
 func (e *QoderExecutor) HttpRequest(ctx context.Context, auth *cliproxyauth.Auth, req *http.Request) (*http.Response, error) {
 	storage, ok := auth.Storage.(*qoderauth.QoderTokenStorage)
 	if !ok {
-		return nil, fmt.Errorf("invalid auth storage type for qoder")
+		return nil, fmt.Errorf("invalid auth storage type for %s", e.providerKey)
 	}
 
 	// Read request body for COSY signing
@@ -824,17 +903,29 @@ func buildQoderModelConfig(storage *qoderauth.QoderTokenStorage, modelKey string
 // Falls back to the static registry if the auth lacks credentials, the request
 // fails, or the response is malformed. Mirrors the FetchKiloModels /
 // FetchCursorModels pattern used by other dynamic providers.
+//
+// The provider key is read from auth.Provider so the same function serves both
+// the international ("qoder") and China ("qoder-cn") editions: it picks the
+// region-specific model-list URL, ID prefix (qoder/ vs qoder-cn/), OwnedBy/Type,
+// and static fallback set.
 func FetchQoderModels(ctx context.Context, auth *cliproxyauth.Auth, cfg *config.Config) []*registry.ModelInfo {
+	provider := strings.TrimSpace(auth.Provider)
+	if provider == "" {
+		provider = "qoder"
+	}
+	ep := qoderauth.EndpointsForProvider(provider)
+	prefix := provider + "/"
+
 	storage, ok := auth.Storage.(*qoderauth.QoderTokenStorage)
 	if !ok || storage == nil || storage.Token == "" {
-		log.Debug("qoder: no token, returning static models")
-		return registry.GetQoderModels()
+		log.Debugf("%s: no token, returning static models", provider)
+		return fallbackModels(provider)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
-	headers, err := qoderauth.BuildAuthHeaders(nil, qoderauth.QoderModelListURL, qoderauth.CosyCredentials{
+	headers, err := qoderauth.BuildAuthHeaders(nil, ep.ModelListURL, qoderauth.CosyCredentials{
 		UserID:    storage.UserID,
 		AuthToken: storage.Token,
 		Name:      storage.Name,
@@ -842,14 +933,14 @@ func FetchQoderModels(ctx context.Context, auth *cliproxyauth.Auth, cfg *config.
 		MachineID: storage.MachineID,
 	})
 	if err != nil {
-		log.Warnf("qoder: build cosy headers for model list: %v", err)
-		return registry.GetQoderModels()
+		log.Warnf("%s: build cosy headers for model list: %v", provider, err)
+		return fallbackModels(provider)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, qoderauth.QoderModelListURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ep.ModelListURL, nil)
 	if err != nil {
-		log.Warnf("qoder: build model list request: %v", err)
-		return registry.GetQoderModels()
+		log.Warnf("%s: build model list request: %v", provider, err)
+		return fallbackModels(provider)
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Accept-Encoding", "identity")
@@ -859,28 +950,28 @@ func FetchQoderModels(ctx context.Context, auth *cliproxyauth.Auth, cfg *config.
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			log.Warnf("qoder: model list fetch canceled: %v", err)
+			log.Warnf("%s: model list fetch canceled: %v", provider, err)
 		} else {
-			log.Warnf("qoder: model list fetch failed: %v", err)
+			log.Warnf("%s: model list fetch failed: %v", provider, err)
 		}
-		return registry.GetQoderModels()
+		return fallbackModels(provider)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Warnf("qoder: read model list response: %v", err)
-		return registry.GetQoderModels()
+		log.Warnf("%s: read model list response: %v", provider, err)
+		return fallbackModels(provider)
 	}
 	if resp.StatusCode != http.StatusOK {
-		log.Warnf("qoder: model list returned %d: %s", resp.StatusCode, truncate(string(body), 300))
-		return registry.GetQoderModels()
+		log.Warnf("%s: model list returned %d: %s", provider, resp.StatusCode, truncate(string(body), 300))
+		return fallbackModels(provider)
 	}
 
 	chat := gjson.GetBytes(body, "chat")
 	if !chat.Exists() || !chat.IsArray() {
-		log.Warnf("qoder: model list response missing 'chat' array")
-		return registry.GetQoderModels()
+		log.Warnf("%s: model list response missing 'chat' array", provider)
+		return fallbackModels(provider)
 	}
 
 	now := time.Now().Unix()
@@ -907,11 +998,11 @@ func FetchQoderModels(ctx context.Context, auth *cliproxyauth.Auth, cfg *config.
 		configs[key] = json.RawMessage(entry.Raw)
 
 		mi := &registry.ModelInfo{
-			ID:            "qoder/" + key,
+			ID:            prefix + key,
 			Object:        "model",
 			Created:       now,
-			OwnedBy:       "qoder",
-			Type:          "qoder",
+			OwnedBy:       provider,
+			Type:          provider,
 			DisplayName:   display,
 			Description:   fmt.Sprintf("%s via Qoder", display),
 			ContextLength: ctxLen,
@@ -948,19 +1039,31 @@ func FetchQoderModels(ctx context.Context, auth *cliproxyauth.Auth, cfg *config.
 	})
 
 	if len(models) == 0 {
-		log.Warn("qoder: model list returned no enabled models, falling back to static")
-		return registry.GetQoderModels()
+		log.Warnf("%s: model list returned no enabled models, falling back to static", provider)
+		return fallbackModels(provider)
 	}
 
 	storage.SetModelConfigs(configs)
 
-	log.Infof("qoder: fetched %d models from /algo/api/v2/model/list", len(models))
+	log.Infof("%s: fetched %d models from /algo/api/v2/model/list", provider, len(models))
 
 	// Fetch usage alongside models so the management UI has fresh credit data.
 	// Use context.Background() so the goroutine outlives the caller's context.
 	go FetchQoderUsage(context.Background(), auth, cfg)
 
 	return models
+}
+
+// fallbackModels returns the static model set for the given provider key.
+// "qoder-cn" resolves to the CN-namespaced static list (same upstream models
+// as the international edition, only the ID prefix / OwnedBy / Type differ);
+// any other value (including the default "qoder") resolves to the international
+// static list.
+func fallbackModels(provider string) []*registry.ModelInfo {
+	if strings.EqualFold(strings.TrimSpace(provider), "qoder-cn") {
+		return registry.GetQoderCNModels()
+	}
+	return registry.GetQoderModels()
 }
 
 // stableHash returns a deterministic hex identifier from the given inputs.
@@ -1015,18 +1118,24 @@ func truncate(s string, n int) string {
 // FetchQoderUsage fetches the current quota usage from /api/v2/quota/usage
 // and caches the result in storage.UsageInfo. It is called opportunistically
 // alongside FetchQoderModels so the management UI can display credit balance
-// without a separate round-trip.
+// without a separate round-trip. The provider key is read from auth.Provider so
+// the region-correct usage URL is selected (openapi.qoder.sh vs
+// openapi.qoder.com.cn).
 func FetchQoderUsage(ctx context.Context, auth *cliproxyauth.Auth, cfg *config.Config) *qoderauth.QoderUsageInfo {
 	storage, ok := auth.Storage.(*qoderauth.QoderTokenStorage)
 	if !ok || storage == nil || storage.Token == "" {
 		return nil
 	}
 
-	const usageURL = "https://openapi.qoder.sh/api/v2/quota/usage"
-	log.Debugf("qoder: fetching usage for user %s (token len=%d)", storage.UserID, len(storage.Token))
+	provider := strings.TrimSpace(auth.Provider)
+	if provider == "" {
+		provider = "qoder"
+	}
+	usageURL := qoderauth.EndpointsForProvider(provider).UsageURL
+	log.Debugf("%s: fetching usage for user %s (token len=%d)", provider, storage.UserID, len(storage.Token))
 	req, err := http.NewRequest(http.MethodGet, usageURL, nil)
 	if err != nil {
-		log.Debugf("qoder: build usage request: %v", err)
+		log.Debugf("%s: build usage request: %v", provider, err)
 		return nil
 	}
 	req.Header.Set("Authorization", "Bearer "+storage.Token)
@@ -1035,31 +1144,31 @@ func FetchQoderUsage(ctx context.Context, auth *cliproxyauth.Auth, cfg *config.C
 	httpClient := helps.NewProxyAwareHTTPClient(ctx, cfg, auth, 15*time.Second)
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		log.Debugf("qoder: usage fetch failed: %v", err)
+		log.Debugf("%s: usage fetch failed: %v", provider, err)
 		return nil
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		log.Debugf("qoder: usage fetch returned %d", resp.StatusCode)
+		log.Debugf("%s: usage fetch returned %d", provider, resp.StatusCode)
 		return nil
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Debugf("qoder: read usage response: %v", err)
+		log.Debugf("%s: read usage response: %v", provider, err)
 		return nil
 	}
 
 	var info qoderauth.QoderUsageInfo
 	if err := json.Unmarshal(body, &info); err != nil {
-		log.Debugf("qoder: parse usage response: %v", err)
+		log.Debugf("%s: parse usage response: %v", provider, err)
 		return nil
 	}
 
 	storage.SetUsageInfo(&info)
-	log.Debugf("qoder: usage fetched — %.0f/%.0f %s used (%.1f%%)",
-		info.UserQuota.Used, info.UserQuota.Total, info.UserQuota.Unit,
+	log.Debugf("%s: usage fetched — %.0f/%.0f %s used (%.1f%%)",
+		provider, info.UserQuota.Used, info.UserQuota.Total, info.UserQuota.Unit,
 		info.TotalUsagePercentage*100)
 	return &info
 }

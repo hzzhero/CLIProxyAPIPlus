@@ -26,6 +26,7 @@ func newAuthManager() *sdkAuth.Manager {
 		sdkAuth.NewCodeBuddyAuthenticator(),
 		sdkAuth.NewCursorAuthenticator(),
 		sdkAuth.NewQoderAuthenticator(),
+		sdkAuth.NewQoderCNAuthenticator(),
 	)
 	return manager
 }
