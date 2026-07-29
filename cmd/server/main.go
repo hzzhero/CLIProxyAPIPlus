@@ -133,7 +133,8 @@ func isOneShotCommandMode(opts commandModeOptions) bool {
 		opts.kiroImport ||
 		opts.kiroIDCLogin ||
 		opts.xaiLogin ||
-		opts.qoderLogin
+		opts.qoderLogin ||
+		opts.qoderCNLogin
 }
 
 // main is the entry point of the application.
@@ -170,6 +171,7 @@ func main() {
 	var codeBuddyLogin bool
 	var xaiLogin bool
 	var qoderLogin bool
+	var qoderCNLogin bool
 	var projectID string
 	var vertexImport string
 	var vertexImportPrefix string
@@ -725,6 +727,7 @@ func main() {
 		kiroIDCLogin:       kiroIDCLogin,
 		xaiLogin:           xaiLogin,
 		qoderLogin:         qoderLogin,
+		qoderCNLogin:       qoderCNLogin,
 	})
 	cloudConfigMissing := isCloudDeploy && !configFileExists
 	homeMode := configLoadedFromHome || (cfg != nil && cfg.Home.Enabled)
