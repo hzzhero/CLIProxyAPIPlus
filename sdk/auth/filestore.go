@@ -359,6 +359,26 @@ func (s *FileTokenStore) readAuthFiles(path, baseDir string) ([]*cliproxyauth.Au
 			}
 		}
 	}
+	// Agnes stores the static API key and base URL in metadata; copy them to
+	// Attributes so OpenAICompatExecutor.resolveCredentials works after reload.
+	if provider == "agnes" {
+		if v, ok := metadata["api_key"].(string); ok && v != "" {
+			auth.Attributes["api_key"] = v
+		}
+		if v, ok := metadata["base_url"].(string); ok && v != "" {
+			auth.Attributes["base_url"] = v
+		}
+		if v, ok := metadata["compat_name"].(string); ok && v != "" {
+			auth.Attributes["compat_name"] = v
+		} else {
+			auth.Attributes["compat_name"] = "agnes"
+		}
+		if v, ok := metadata["provider_key"].(string); ok && v != "" {
+			auth.Attributes["provider_key"] = v
+		} else {
+			auth.Attributes["provider_key"] = "agnes"
+		}
+	}
 	cliproxyauth.ApplyCustomHeadersFromMetadata(auth)
 	return []*cliproxyauth.Auth{auth}, nil
 }

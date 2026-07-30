@@ -19,6 +19,7 @@ func init() {
 	registerRefreshLead("cursor", func() Authenticator { return NewCursorAuthenticator() })
 	registerRefreshLead("qoder", func() Authenticator { return NewQoderAuthenticator() })
 	registerRefreshLead("qoder-cn", func() Authenticator { return NewQoderCNAuthenticator() })
+	registerRefreshLead("agnes", func() Authenticator { return NewAgnesAuthenticator() })
 }
 
 func registerRefreshLead(provider string, factory func() Authenticator) {

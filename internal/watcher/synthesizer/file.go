@@ -227,6 +227,26 @@ func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) []
 			a.Storage = &storage
 		}
 	}
+	// Agnes stores the static API key and base URL in metadata; copy them to
+	// Attributes so OpenAICompatExecutor.resolveCredentials works after reload.
+	if provider == "agnes" {
+		if v, ok := metadata["api_key"].(string); ok && v != "" {
+			a.Attributes["api_key"] = v
+		}
+		if v, ok := metadata["base_url"].(string); ok && v != "" {
+			a.Attributes["base_url"] = v
+		}
+		if v, ok := metadata["compat_name"].(string); ok && v != "" {
+			a.Attributes["compat_name"] = v
+		} else {
+			a.Attributes["compat_name"] = "agnes"
+		}
+		if v, ok := metadata["provider_key"].(string); ok && v != "" {
+			a.Attributes["provider_key"] = v
+		} else {
+			a.Attributes["provider_key"] = "agnes"
+		}
+	}
 	if provider == "gemini-cli" {
 		if virtuals := SynthesizeGeminiVirtualAuths(a, metadata, now); len(virtuals) > 0 {
 			for _, v := range virtuals {

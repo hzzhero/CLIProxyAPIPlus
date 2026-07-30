@@ -318,8 +318,46 @@ func GetStaticModelDefinitionsByChannel(channel string) []*ModelInfo {
 		return GetQoderModels()
 	case "qoder-cn":
 		return GetQoderCNModels()
+	case "agnes":
+		return GetAgnesModels()
 	default:
 		return nil
+	}
+}
+
+// GetAgnesModels returns the Agnes AI model definitions.
+// Agnes is an OpenAI-compatible provider; the API key is obtained via
+// -agnes-login and the OpenAICompatExecutor routes requests to
+// https://apihub.agnes-ai.cn/v1/chat/completions.
+func GetAgnesModels() []*ModelInfo {
+	return []*ModelInfo{
+		{
+			ID:            "agnes/agnes-2.0-flash",
+			Object:        "model",
+			OwnedBy:       "agnes",
+			Type:          "agnes",
+			DisplayName:   "Agnes 2.0 Flash",
+			Description:   "Agnes 2.0 Flash via Agnes AI",
+			ContextLength: 512000,
+		},
+		{
+			ID:            "agnes/agnes-2.5-flash",
+			Object:        "model",
+			OwnedBy:       "agnes",
+			Type:          "agnes",
+			DisplayName:   "Agnes 2.5 Flash",
+			Description:   "Agnes 2.5 Flash via Agnes AI",
+			ContextLength: 512000,
+		},
+		{
+			ID:            "agnes/agnes-2.5-pro-alpha",
+			Object:        "model",
+			OwnedBy:       "agnes",
+			Type:          "agnes",
+			DisplayName:   "Agnes 2.5 Pro Alpha",
+			Description:   "Agnes 2.5 Pro Alpha via Agnes AI",
+			ContextLength: 1000000,
+		},
 	}
 }
 
