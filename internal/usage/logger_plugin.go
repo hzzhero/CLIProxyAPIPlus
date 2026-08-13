@@ -630,7 +630,8 @@ func isSafeUsageIdentifier(value string) bool {
 	switch lower {
 	case "gemini", "gemini-cli", "aistudio", "vertex", "claude", "codex", "openai",
 		"openai-compatibility", "openai-compatible", "antigravity", "github-copilot",
-		"gitlab", "cursor", "kiro", "kilo", "kimi", "iflow", "codebuddy", "local":
+		"gitlab", "cursor", "kiro", "kilo", "kimi", "iflow", "codebuddy", "qoder", "qoder-cn",
+		"trae-cn", "local":
 		return true
 	default:
 		return false

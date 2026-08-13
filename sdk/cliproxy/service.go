@@ -1134,6 +1134,8 @@ func (s *Service) registerExecutorForAuth(a *coreauth.Auth, forceReplace bool) {
 		s.coreManager.RegisterExecutor(executor.NewQoderExecutor(s.cfg))
 	case "qoder-cn":
 		s.coreManager.RegisterExecutor(executor.NewQoderCNExecutor(s.cfg))
+	case "trae-cn":
+		s.coreManager.RegisterExecutor(executor.NewTraeCNExecutor(s.cfg))
 	default:
 		providerKey := strings.ToLower(strings.TrimSpace(a.Provider))
 		if providerKey == "" {
@@ -2113,6 +2115,9 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 		models = applyExcludedModels(models, excluded)
 	case "qoder-cn":
 		models = executor.FetchQoderModels(context.Background(), a, s.cfg)
+		models = applyExcludedModels(models, excluded)
+	case "trae-cn":
+		models = registry.GetTraeCNModels()
 		models = applyExcludedModels(models, excluded)
 	default:
 		// Handle OpenAI-compatibility providers by name using config
