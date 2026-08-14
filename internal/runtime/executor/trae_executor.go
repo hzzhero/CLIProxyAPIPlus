@@ -107,8 +107,8 @@ func (te *TraeExecutor) Refresh(ctx context.Context, auth *cliproxyauth.Auth) (*
 	if tokenData.RefreshToken != "" {
 		auth.Metadata["refresh_token"] = tokenData.RefreshToken
 	}
-	if tokenData.ExpiresAt != "" {
-		auth.Metadata["expires_at"] = tokenData.ExpiresAt
+	if !tokenData.ExpiresAt.IsZero() {
+		auth.Metadata["expires_at"] = tokenData.ExpiresAt.Format(time.RFC3339)
 	}
 	auth.Metadata["type"] = "trae"
 

@@ -91,7 +91,7 @@ func (a TraeAuthenticator) Login(ctx context.Context, cfg *config.Config, opts *
 		"scope":         tokenData.Scope,
 		"email":         tokenData.Email,
 		"user_id":       tokenData.UserID,
-		"expires_at":    tokenData.ExpiresAt,
+		"expires_at":    tokenData.ExpiresAt.Format(time.RFC3339),
 	}
 
 	return &coreauth.Auth{

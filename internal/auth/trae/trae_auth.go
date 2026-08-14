@@ -152,7 +152,7 @@ func (ta *TraeAuth) ExchangeCodeForTokens(ctx context.Context, code, redirectURI
 	}
 
 	if tokenResp.ExpiresIn > 0 {
-		data.ExpiresAt = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).UTC().Format(time.RFC3339)
+		data.ExpiresAt = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
 	}
 
 	return data, nil
@@ -264,7 +264,7 @@ func (ta *TraeAuth) CreateTokenStorage(data *TokenData) *TokenStorage {
 		RefreshToken: data.RefreshToken,
 		TokenType:    data.TokenType,
 		Scope:        data.Scope,
-		ExpiresAt:    data.ExpiresAt,
+		ExpiresAt:    data.ExpiresAt.Format(time.RFC3339),
 		Email:        data.Email,
 		UserID:       data.UserID,
 		Type:         "trae",
