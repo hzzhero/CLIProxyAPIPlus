@@ -109,6 +109,7 @@ func waitForCallback(ctx context.Context, redirectURI, codeVerifier string, auth
 	callbackCh := make(chan *trae.TokenData, 1)
 	errCh := make(chan error, 1)
 
+	// Extract port from redirect URI
 	portStr := strings.Split(redirectURI, ":")[2]
 	portStr = strings.Split(portStr, "/")[0]
 	var port int

@@ -11,6 +11,18 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/misc"
 )
 
+// TokenData holds the raw OAuth token response from Trae.
+type TokenData struct {
+	AccessToken  string    `json:"access_token"`
+	RefreshToken string    `json:"refresh_token"`
+	TokenType    string    `json:"token_type"`
+	Scope        string    `json:"scope,omitempty"`
+	ExpiresAt    time.Time `json:"expires_at,omitempty"`
+	Email        string    `json:"email,omitempty"`
+	UserID       string    `json:"user_id,omitempty"`
+	Type         string    `json:"type"`
+}
+
 // TokenStorage stores OAuth2 token information for Trae API authentication.
 type TokenStorage struct {
 	AccessToken  string `json:"access_token"`
