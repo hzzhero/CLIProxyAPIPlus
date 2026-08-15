@@ -96,13 +96,18 @@ func (s *OAuthServer) Stop(ctx context.Context) error {
 	return s.server.Shutdown(ctx)
 }
 
-// WaitForCallback blocks until a callback result, server error, or timeout occurs.
-func (s *OAuthServer) WaitForCallback(timeout time.Duration) (*OAuthResult, error) {
+// WaitForCallback blocks until a callback result, server error, timeout, or
+// context cancellation occurs. The ctx param lets callers (e.g. Login) stop
+// the wait early — e.g. after a manual-paste login — so the goroutine does
+// not linger until the timeout fires.
+func (s *OAuthServer) WaitForCallback(ctx context.Context, timeout time.Duration) (*OAuthResult, error) {
 	select {
 	case res := <-s.result:
 		return res, nil
 	case err := <-s.errChan:
 		return nil, err
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	case <-time.After(timeout):
 		return nil, fmt.Errorf("timeout waiting for OAuth callback")
 	}

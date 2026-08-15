@@ -125,7 +125,7 @@ func (a *TraeCNAuth) ExchangeToken(ctx context.Context, clientID, refreshToken s
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("trae-cn: exchange failed: %d %s. Response: %s", resp.StatusCode, resp.Status, string(body))
+		return nil, fmt.Errorf("trae-cn: exchange failed: %d %s. Response: %s", resp.StatusCode, resp.Status, truncateBody(body, 200))
 	}
 
 	var response exchangeTokenResponse
@@ -142,6 +142,16 @@ func (a *TraeCNAuth) ExchangeToken(ctx context.Context, clientID, refreshToken s
 		ExpiresIn:    response.Result.ExpiresIn,
 		UserID:       response.Result.UserID,
 	}, nil
+}
+
+// truncateBody caps a response body at n bytes for safe inclusion in error
+// messages, mirroring the qoder auth helper. Keeps tokens out of logs when
+// the upstream echoes the request or returns a large error payload.
+func truncateBody(body []byte, n int) string {
+	if len(body) <= n {
+		return string(body)
+	}
+	return string(body[:n]) + "..."
 }
 
 // ParseCallbackURL extracts login parameters from a Trae CN callback URL.

@@ -13,6 +13,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/codex"
 	qoderauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/qoder"
+	traecnauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/traecn"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/geminicli"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
@@ -220,6 +221,15 @@ func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) []
 		// buildQoderModelConfig to fail with "model config cache is empty"
 		// whenever /algo/api/v2/model/list is unavailable.
 		var storage qoderauth.QoderTokenStorage
+		if errStorage := json.Unmarshal(data, &storage); errStorage == nil {
+			if storage.Type == "" {
+				storage.Type = provider
+			}
+			a.Storage = &storage
+		}
+	}
+	if provider == "trae-cn" {
+		var storage traecnauth.TraeCNTokenStorage
 		if errStorage := json.Unmarshal(data, &storage); errStorage == nil {
 			if storage.Type == "" {
 				storage.Type = provider
