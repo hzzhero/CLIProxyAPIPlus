@@ -55,6 +55,14 @@ func TestParseCallbackURL(t *testing.T) {
 	}
 }
 
+func TestParamKeys(t *testing.T) {
+	params := map[string]string{"z": "1", "a": "2", "m": "3"}
+	keys := ParamKeys(params)
+	if len(keys) != 3 || keys[0] != "a" || keys[1] != "m" || keys[2] != "z" {
+		t.Fatalf("ParamKeys = %v, want sorted [a m z]", keys)
+	}
+}
+
 func TestTokenStorageSaveAndType(t *testing.T) {
 	dir := t.TempDir()
 	storage := &TraeCNTokenStorage{

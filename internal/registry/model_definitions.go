@@ -318,6 +318,8 @@ func GetStaticModelDefinitionsByChannel(channel string) []*ModelInfo {
 		return GetQoderModels()
 	case "qoder-cn":
 		return GetQoderCNModels()
+	case "trae-cn":
+		return GetTraeCNModels()
 	default:
 		return nil
 	}
@@ -894,4 +896,12 @@ func GetQoderCNModels() []*ModelInfo {
 		m.Type = "qoder-cn"
 	}
 	return base
+}
+
+
+// GetTraeCNModels returns the static fallback model list for trae-cn.
+// The authoritative list is fetched dynamically via executor.FetchTraeCNModels;
+// this fallback only applies when the upstream model_list call fails.
+func GetTraeCNModels() []*ModelInfo {
+	return []*ModelInfo{}
 }

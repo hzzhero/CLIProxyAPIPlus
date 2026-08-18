@@ -15,6 +15,7 @@ import (
 	"time"
 
 	qoderauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/qoder"
+	traecn "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/traecn"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
@@ -350,6 +351,16 @@ func (s *FileTokenStore) readAuthFiles(path, baseDir string) ([]*cliproxyauth.Au
 	}
 	if provider == "qoder" || provider == "qoder-cn" {
 		var storage qoderauth.QoderTokenStorage
+		if raw, errMarshal := json.Marshal(metadata); errMarshal == nil {
+			if errUnmarshal := json.Unmarshal(raw, &storage); errUnmarshal == nil {
+				if strings.TrimSpace(storage.Type) == "" {
+					storage.Type = provider
+				}
+				auth.Storage = &storage
+			}
+		}
+	} else if provider == "trae-cn" {
+		var storage traecn.TraeCNTokenStorage
 		if raw, errMarshal := json.Marshal(metadata); errMarshal == nil {
 			if errUnmarshal := json.Unmarshal(raw, &storage); errUnmarshal == nil {
 				if strings.TrimSpace(storage.Type) == "" {

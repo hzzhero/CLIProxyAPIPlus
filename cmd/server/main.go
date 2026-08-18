@@ -134,7 +134,8 @@ func isOneShotCommandMode(opts commandModeOptions) bool {
 		opts.kiroIDCLogin ||
 		opts.xaiLogin ||
 		opts.qoderLogin ||
-		opts.qoderCNLogin
+		opts.qoderCNLogin ||
+		opts.traeCNLogin
 }
 
 // main is the entry point of the application.
@@ -216,6 +217,7 @@ func main() {
 	flag.BoolVar(&xaiLogin, "xai-login", false, "Login to xAI using OAuth")
 	flag.BoolVar(&qoderLogin, "qoder-login", false, "Login to Qoder using OAuth device flow")
 	flag.BoolVar(&qoderCNLogin, "qoder-cn-login", false, "Login to Qoder (CN) using a personal access token")
+	flag.BoolVar(&traeCNLogin, "trae-cn-login", false, "Login to Trae CN using browser OAuth")
 	flag.StringVar(&projectID, "project_id", "", "Project ID (Gemini only, not required)")
 	flag.StringVar(&configPath, "config", DefaultConfigPath, "Configure File Path")
 	flag.StringVar(&vertexImport, "vertex-import", "", "Import Vertex service account key JSON file")
@@ -728,6 +730,7 @@ func main() {
 		xaiLogin:           xaiLogin,
 		qoderLogin:         qoderLogin,
 		qoderCNLogin:       qoderCNLogin,
+		traeCNLogin:        traeCNLogin,
 	})
 	cloudConfigMissing := isCloudDeploy && !configFileExists
 	homeMode := configLoadedFromHome || (cfg != nil && cfg.Home.Enabled)
@@ -879,6 +882,8 @@ func main() {
 		cmd.DoQoderLogin(cfg, options)
 	} else if qoderCNLogin {
 		cmd.DoQoderCNLogin(cfg, options)
+	} else if traeCNLogin {
+		cmd.DoTraeCNLogin(cfg, options)
 	} else {
 		// In cloud deploy mode without config file, just wait for shutdown signals
 		if isCloudDeploy && !configFileExists {
