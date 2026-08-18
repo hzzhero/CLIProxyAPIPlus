@@ -14,7 +14,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
-	log "github.com/sirupsen/logrus"
 )
 
 // DeviceFingerprint holds the x-* header values Trae expects on every call.
@@ -277,8 +276,8 @@ func CreateTokenStorage(td *TokenData, fp DeviceFingerprint, email string, expir
 	return storage
 }
 
-// firstNonEmptyParam returns the first non-empty value from params matching any of the given keys.
-func firstNonEmptyParam(params map[string]string, keys ...string) string {
+// FirstNonEmptyParam returns the first non-empty value from params matching any of the given keys.
+func FirstNonEmptyParam(params map[string]string, keys ...string) string {
 	for _, key := range keys {
 		if v := params[key]; v != "" {
 			return v
@@ -287,8 +286,8 @@ func firstNonEmptyParam(params map[string]string, keys ...string) string {
 	return ""
 }
 
-// paramKeys returns sorted parameter keys for error reporting.
-func paramKeys(params map[string]string) []string {
+// ParamKeys returns sorted parameter keys for error reporting.
+func ParamKeys(params map[string]string) []string {
 	keys := make([]string, 0, len(params))
 	for k := range params {
 		keys = append(keys, k)

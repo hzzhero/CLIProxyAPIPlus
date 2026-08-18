@@ -5,11 +5,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
-
-	log "github.com/sirupsen/logrus"
 )
 
 const successRedirectURL = "https://www.trae.com.cn/success"

@@ -180,8 +180,8 @@ func (a *TraeCNAuthenticator) Login(ctx context.Context, cfg *config.Config, opt
 	}
 
 	// Extract token from callback parameters.
-	accessToken := traecn.FirstNonEmptyParam(params, "token", "access_token", "ide_token")
-	refreshToken := traecn.FirstNonEmptyParam(params, "refresh_token")
+	accessToken := firstNonEmptyParam(params, "token", "access_token", "ide_token")
+	refreshToken := firstNonEmptyParam(params, "refresh_token")
 
 	var tokenData *traecn.TokenData
 	if accessToken != "" {
@@ -197,7 +197,7 @@ func (a *TraeCNAuthenticator) Login(ctx context.Context, cfg *config.Config, opt
 			return nil, fmt.Errorf("trae-cn: ExchangeToken failed: %w", err)
 		}
 	} else {
-		availableKeys := traecn.ParamKeys(params)
+		availableKeys := paramKeys(params)
 		return nil, fmt.Errorf("trae-cn: no token found in callback; available keys: %v", availableKeys)
 	}
 

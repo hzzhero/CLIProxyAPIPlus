@@ -106,7 +106,8 @@ type commandModeOptions struct {
 	kiroIDCLogin       bool
 	xaiLogin           bool
 	qoderLogin         bool
-	qoderCNLogin       bool`r`n`ttraeCNLogin        bool
+	qoderCNLogin       bool
+	traeCNLogin        bool
 }
 
 func isOneShotCommandMode(opts commandModeOptions) bool {
@@ -172,7 +173,8 @@ func main() {
 	var codeBuddyLogin bool
 	var xaiLogin bool
 	var qoderLogin bool
-	var qoderCNLogin       bool`r`n`ttraeCNLogin        bool
+	var qoderCNLogin bool
+	var traeCNLogin bool
 	var projectID string
 	var vertexImport string
 	var vertexImportPrefix string
