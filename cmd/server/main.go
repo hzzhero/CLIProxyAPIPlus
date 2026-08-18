@@ -1,4 +1,4 @@
-// Package main provides the entry point for the CLI Proxy API server.
+﻿// Package main provides the entry point for the CLI Proxy API server.
 // This server acts as a proxy that provides OpenAI/Gemini/Claude compatible API interfaces
 // for CLI models, allowing CLI models to be used with tools and libraries designed for standard AI APIs.
 package main
@@ -106,7 +106,7 @@ type commandModeOptions struct {
 	kiroIDCLogin       bool
 	xaiLogin           bool
 	qoderLogin         bool
-	qoderCNLogin       bool
+	qoderCNLogin       bool`r`n`ttraeCNLogin        bool
 }
 
 func isOneShotCommandMode(opts commandModeOptions) bool {
@@ -171,7 +171,7 @@ func main() {
 	var codeBuddyLogin bool
 	var xaiLogin bool
 	var qoderLogin bool
-	var qoderCNLogin bool
+	var qoderCNLogin       bool`r`n`ttraeCNLogin        bool
 	var projectID string
 	var vertexImport string
 	var vertexImportPrefix string
@@ -1060,3 +1060,4 @@ func loadPluginBootstrapConfig(path string) *config.Config {
 	}
 	return cfg
 }
+
