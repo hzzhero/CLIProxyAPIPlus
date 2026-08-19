@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"runtime"
 	"strings"
 	"time"
 
@@ -58,50 +57,19 @@ func DefaultDeviceContext(clientID string, endpoints Endpoints) DeviceContext {
 		ClientID:      clientID,
 		PluginVersion: endpoints.DefaultPluginVersion,
 		MachineID:     uuid.NewString(),
-		DeviceID:      endpoints.DefaultDeviceID,
-		XDeviceBrand:  defaultDeviceBrand(),
-		XDeviceType:   defaultDeviceType(),
-		XOSVersion:    defaultOSVersion(),
-		XEnv:          "", // left empty, same as cockpit-tools fallback
-		XAppVersion:   endpoints.DefaultAppVersion,
-		XAppType:      endpoints.DefaultAppType,
+		// Trae's ExchangeToken validator now requires an 8..24-digit
+		// numeric device id. The literal "0" placeholder that earlier
+		// versions used is rejected. We fall back to a fresh 19-digit
+		// crypto-random id which matches the format cockpit-tools sees
+		// from real IDE installations.
+		DeviceID:     DefaultNumericDeviceID(),
+		XDeviceBrand: DefaultXDeviceBrand(),
+		XDeviceType:  DefaultXDeviceType(),
+		XOSVersion:   DefaultXOSVersion(),
+		XEnv:         "", // left empty, same as cockpit-tools fallback
+		XAppVersion:  endpoints.DefaultAppVersion,
+		XAppType:     endpoints.DefaultAppType,
 	}
-}
-
-func defaultDeviceType() string {
-	switch runtime.GOOS {
-	case "darwin":
-		return "mac"
-	case "windows":
-		return "windows"
-	case "linux":
-		return "linux"
-	}
-	return "unknown"
-}
-
-func defaultDeviceBrand() string {
-	switch runtime.GOOS {
-	case "darwin":
-		return "Mac"
-	case "windows":
-		return "Windows"
-	case "linux":
-		return "Linux"
-	}
-	return "PC"
-}
-
-func defaultOSVersion() string {
-	switch runtime.GOOS {
-	case "darwin":
-		return "macOS"
-	case "windows":
-		return "Windows"
-	case "linux":
-		return "Linux"
-	}
-	return "unknown"
 }
 
 // RandomLoginTraceID generates a random login_trace_id. cockpit-tools
@@ -300,15 +268,27 @@ func (t *TraeAuth) candidateOrigins(loginHost string) []string {
 }
 
 // ExchangeResult bundles the exchange response with the origin that
-// actually served it, so GetUserInfo can reuse the same host.
+// actually served it, so GetUserInfo can reuse the same host. It also
+// carries the DeviceInfo/DeviceKeyPair generated during the auth-code
+// exchange so the scheduler can later refresh the session using a
+// signed DeviceProof.
 type ExchangeResult struct {
-	Resp       *ExchangeResponse
-	UsedOrigin string
+	Resp          *ExchangeResponse
+	UsedOrigin    string
+	DeviceInfo    map[string]any
+	DeviceKeyPair *DeviceKeyPair
 }
 
 // ExchangeToken exchanges either an auth_code or a refresh_token for a
 // fresh access_token bundle. It iterates candidate origins and both
 // exchange paths, returning the first successful result.
+//
+// For the auth_code path, it mirrors cockpit-tools' official payload
+// shape: ClientID + AuthCode + CodeVerifier + DeviceInfo (containing a
+// freshly generated P-256 DevicePublicKey bound to the current
+// DeviceContext) + IDEVersion. The resulting ExchangeResult records
+// the DeviceInfo and DeviceKeyPair so later refresh operations can
+// re-sign the request with a valid DeviceProof.
 func (t *TraeAuth) ExchangeToken(ctx context.Context, loginHost string, dc DeviceContext, authCode, refreshToken, codeVerifier, redirectURI string) (*ExchangeResult, error) {
 	if authCode == "" && refreshToken == "" {
 		return nil, fmt.Errorf("trae auth: ExchangeToken requires authCode or refreshToken")
@@ -317,12 +297,28 @@ func (t *TraeAuth) ExchangeToken(ctx context.Context, loginHost string, dc Devic
 	origins := t.candidateOrigins(loginHost)
 	var errs []string
 
+	// Materialize one key-pair + device-info per ExchangeToken call so
+	// the server sees a consistent device identity across origins.
+	// (Refresh path reuses existing stored material, not a fresh one.)
+	var deviceInfo map[string]any
+	var keyPair *DeviceKeyPair
+	if authCode != "" {
+		kp, err := GenerateDeviceKeyPair()
+		if err != nil {
+			return nil, fmt.Errorf("trae auth: generate device key pair failed: %w", err)
+		}
+		keyPair = kp
+		deviceInfo = BuildOfficialDeviceInfo(dc, false /* isSolo — determined by caller via ClientID if needed, but payload field layout is identical */, kp.PublicKeyPEM)
+	}
+
 	for _, origin := range origins {
 		for _, path := range t.endpoints.ExchangeTokenPaths {
 			fullURL := strings.TrimRight(origin, "/") + path
-			result, err := t.doExchangeToken(ctx, fullURL, dc, authCode, refreshToken, codeVerifier, redirectURI)
+			result, err := t.doExchangeToken(ctx, fullURL, dc, authCode, refreshToken, codeVerifier, redirectURI, deviceInfo, dc.XAppVersion)
 			if err == nil && result != nil && result.Resp != nil {
 				result.UsedOrigin = origin
+				result.DeviceInfo = deviceInfo
+				result.DeviceKeyPair = keyPair
 				return result, nil
 			}
 			errs = append(errs, fmt.Sprintf("%s => %v", fullURL, err))
@@ -331,33 +327,57 @@ func (t *TraeAuth) ExchangeToken(ctx context.Context, loginHost string, dc Devic
 	return nil, fmt.Errorf("trae auth: ExchangeToken failed: %s", strings.Join(errs, " | "))
 }
 
-func (t *TraeAuth) doExchangeToken(ctx context.Context, fullURL string, dc DeviceContext, authCode, refreshToken, codeVerifier, redirectURI string) (*ExchangeResult, error) {
-	payload := map[string]any{
-		"ClientID":      dc.ClientID,
-		"ClientSecret":  t.endpoints.ExchangeClientSecret,
-		"client_id":     dc.ClientID,
-		"client_secret": t.endpoints.ExchangeClientSecret,
-	}
+// doExchangeToken performs a single POST to one ExchangeToken URL.
+//
+// Payload shape differs slightly depending on grant type, matching
+// cockpit-tools exactly:
+//
+//	auth_code flow: ClientID / AuthCode / CodeVerifier / DeviceInfo /
+//	                IDEVersion
+//	refresh flow:   ClientID / ClientSecret / RefreshToken / UserID=""
+//
+// In both cases we also include the snake_case aliases (client_id,
+// refresh_token, redirect_uri) so older / OAuth2-style endpoints can
+// still read the request; these aliases are additive only and are not
+// present on the reference call paths.
+func (t *TraeAuth) doExchangeToken(
+	ctx context.Context,
+	fullURL string,
+	dc DeviceContext,
+	authCode, refreshToken, codeVerifier, redirectURI string,
+	deviceInfo map[string]any,
+	ideVersion string,
+) (*ExchangeResult, error) {
+	payload := make(map[string]any, 12)
+
 	if authCode != "" {
+		// Official auth-code exchange payload shape.
+		payload["ClientID"] = dc.ClientID
 		payload["AuthCode"] = authCode
-		payload["authCode"] = authCode
-		payload["Code"] = authCode
-		payload["code"] = authCode
+		payload["CodeVerifier"] = codeVerifier
+		if deviceInfo != nil {
+			payload["DeviceInfo"] = deviceInfo
+		}
+		if ideVersion != "" {
+			payload["IDEVersion"] = ideVersion
+		}
+		// Additive aliases for compatibility with stricter parsers.
+		payload["client_id"] = dc.ClientID
 		if redirectURI != "" {
 			payload["RedirectUri"] = redirectURI
 			payload["redirect_uri"] = redirectURI
 		}
-	}
-	if refreshToken != "" {
+	} else {
+		// Refresh flow.
+		payload["ClientID"] = dc.ClientID
+		payload["ClientSecret"] = t.endpoints.ExchangeClientSecret
 		payload["RefreshToken"] = refreshToken
-		payload["refreshToken"] = refreshToken
+		payload["UserID"] = ""
+		// Additive OAuth2 alias.
 		payload["refresh_token"] = refreshToken
-		// grant_type ensures compatibility with standard OAuth2 paths
 		payload["grant_type"] = "refresh_token"
-	}
-	if codeVerifier != "" {
-		payload["CodeVerifier"] = codeVerifier
-		payload["code_verifier"] = codeVerifier
+		payload["client_id"] = dc.ClientID
+		payload["client_secret"] = t.endpoints.ExchangeClientSecret
 	}
 
 	bodyJSON, _ := json.Marshal(payload)
@@ -368,6 +388,16 @@ func (t *TraeAuth) doExchangeToken(ctx context.Context, fullURL string, dc Devic
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "CLIProxyAPI/1.0 trae-authenticator")
+	// cockpit-tools sends an empty x-cloudide-token header on the
+	// auth-code exchange. When the shortcut CloudIDEToken path is used
+	// we override this via Set below.
+	cloudideToken := ""
+	if cc, ok := payload["CloudIDEToken"]; ok {
+		if s, ok := cc.(string); ok {
+			cloudideToken = s
+		}
+	}
+	req.Header.Set("x-cloudide-token", cloudideToken)
 
 	resp, err := t.client.Do(req)
 	if err != nil {

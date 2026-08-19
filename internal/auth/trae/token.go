@@ -78,22 +78,42 @@ type UserInfoResponse struct {
 // flat and JSON-friendly avoids any decoding surprises when the
 // file-token-store rehydrates it.
 type TraeTokenStorage struct {
-	Type           string         `json:"type"`
-	Provider       string         `json:"provider"`
-	AccessToken    string         `json:"access_token"`
-	RefreshToken   string         `json:"refresh_token"`
-	TokenType      string         `json:"token_type,omitempty"`
-	ExpiresAt      int64          `json:"expires_at,omitempty"`
-	ClientID       string         `json:"client_id"`
-	LoginHost      string         `json:"login_host,omitempty"`
-	LoginRegion    string         `json:"login_region,omitempty"`
-	LoginTraceID   string         `json:"login_trace_id,omitempty"`
-	UserTag        string         `json:"user_tag,omitempty"`
-	Email          string         `json:"email,omitempty"`
-	UserID         string         `json:"user_id,omitempty"`
-	Nickname       string         `json:"nickname,omitempty"`
-	AccountAPIHost string         `json:"account_api_host,omitempty"`
-	Metadata       map[string]any `json:"metadata,omitempty"`
+	Type           string `json:"type"`
+	Provider       string `json:"provider"`
+	AccessToken    string `json:"access_token"`
+	RefreshToken   string `json:"refresh_token"`
+	TokenType      string `json:"token_type,omitempty"`
+	ExpiresAt      int64  `json:"expires_at,omitempty"`
+	ClientID       string `json:"client_id"`
+	LoginHost      string `json:"login_host,omitempty"`
+	LoginRegion    string `json:"login_region,omitempty"`
+	LoginTraceID   string `json:"login_trace_id,omitempty"`
+	UserTag        string `json:"user_tag,omitempty"`
+	Email          string `json:"email,omitempty"`
+	UserID         string `json:"user_id,omitempty"`
+	Nickname       string `json:"nickname,omitempty"`
+	AccountAPIHost string `json:"account_api_host,omitempty"`
+	// DeviceID / MachineID are preserved so the refresh DeviceProof
+	// flow re-uses the same device identity that was registered at
+	// auth-code exchange time.
+	DeviceID  string `json:"device_id,omitempty"`
+	MachineID string `json:"machine_id,omitempty"`
+	// XAppVersion is the IDE version reported during exchange and
+	// needed when sending DeviceProof (signatures are bound to it in
+	// some server implementations via the DeviceInfo.ClientVersion
+	// field).
+	XAppVersion string `json:"x_app_version,omitempty"`
+	// DeviceKeyPair (P-256) is required to sign the official refresh
+	// DeviceProof message. Storing it on disk is equivalent to what
+	// cockpit-tools does under storage key prefix
+	// TRAE_STORAGE_DEVICE_KEY_PREFIX/<device_id>.
+	DevicePrivateKeyPEM string `json:"device_private_key_pem,omitempty"`
+	DevicePublicKeyPEM  string `json:"device_public_key_pem,omitempty"`
+	// DeviceInfo stores the raw DeviceInfo object from auth-code
+	// exchange so a future refresh path can enrich it in-place without
+	// rebuilding from scratch.
+	DeviceInfo map[string]any `json:"device_info,omitempty"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
 }
 
 // SetMetadata injects metadata into the storage object before a

@@ -343,20 +343,29 @@ func (a *TraeCNAuthenticator) buildAuthRecord(
 	info *trae.UserInfoResponse,
 ) (*coreauth.Auth, error) {
 	storage := &trae.TraeTokenStorage{
-		Provider:       a.Provider(),
-		AccessToken:    ex.Resp.AccessToken,
-		RefreshToken:   ex.Resp.RefreshToken,
-		TokenType:      ex.Resp.TokenType,
-		ExpiresAt:      ex.Resp.ExpiresAt,
-		ClientID:       dc.ClientID,
-		LoginHost:      callback.LoginHost,
-		LoginRegion:    callback.LoginRegion,
-		LoginTraceID:   callback.LoginTraceID,
-		UserTag:        callback.UserTag,
-		Email:          info.Email,
-		UserID:         info.UserID,
-		Nickname:       info.Nickname,
-		AccountAPIHost: ex.UsedOrigin,
+		Provider:     a.Provider(),
+		AccessToken:  ex.Resp.AccessToken,
+		RefreshToken: ex.Resp.RefreshToken,
+		TokenType:    ex.Resp.TokenType,
+		ExpiresAt:    ex.Resp.ExpiresAt,
+		ClientID:     dc.ClientID,
+		LoginHost:    callback.LoginHost,
+		LoginRegion:  callback.LoginRegion,
+		LoginTraceID: callback.LoginTraceID,
+		UserTag:      callback.UserTag,
+		Email:        info.Email,
+		UserID:       info.UserID,
+		Nickname:     info.Nickname,
+		// Device identity captured at exchange time so later refresh
+		// DeviceProof flows can rebuild the exact DeviceInfo + re-sign
+		// with the same P-256 key the server already recorded.
+		AccountAPIHost:      ex.UsedOrigin,
+		DeviceID:            dc.DeviceID,
+		MachineID:           dc.MachineID,
+		XAppVersion:         dc.XAppVersion,
+		DeviceInfo:          ex.DeviceInfo,
+		DevicePrivateKeyPEM: devicePrivateKey(ex.DeviceKeyPair),
+		DevicePublicKeyPEM:  devicePublicKey(ex.DeviceKeyPair),
 	}
 
 	label := info.Email
@@ -446,4 +455,22 @@ func regionID(endpoints trae.Endpoints, loginRegion, origin string) string {
 		}
 	}
 	return r
+}
+
+// devicePrivateKey returns the PEM of the P-256 device private key or
+// an empty string when the exchange did not capture one (e.g. shortcut
+// CloudIDEToken path, or refresh flow).
+func devicePrivateKey(kp *trae.DeviceKeyPair) string {
+	if kp == nil {
+		return ""
+	}
+	return kp.PrivateKeyPEM
+}
+
+// devicePublicKey returns the PEM of the P-256 device public key.
+func devicePublicKey(kp *trae.DeviceKeyPair) string {
+	if kp == nil {
+		return ""
+	}
+	return kp.PublicKeyPEM
 }
