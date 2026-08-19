@@ -220,25 +220,27 @@ func (s *Service) syncPluginRuntimeConfig(ctx context.Context) bool {
 }
 
 func (s *Service) syncPluginModelRuntime(ctx context.Context) {
-	if s == nil || s.pluginHost == nil || s.coreManager == nil {
+	if s == nil || s.coreManager == nil {
 		return
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	s.pluginHost.RegisterModels(ctx, registry.GetGlobalRegistry())
-	s.registerAvailableExecutors(ctx, executorRegistrationOptions{
-		includeBaseline:   s.cfg != nil && s.cfg.Home.Enabled,
-		includePlugins:    true,
-		forceReplaceAuths: true,
-		auths:             s.coreManager.List(),
-	})
+	if s.pluginHost != nil {
+		s.pluginHost.RegisterModels(ctx, registry.GetGlobalRegistry())
+		s.registerAvailableExecutors(ctx, executorRegistrationOptions{
+			includeBaseline:   s.cfg != nil && s.cfg.Home.Enabled,
+			includePlugins:    true,
+			forceReplaceAuths: true,
+			auths:             s.coreManager.List(),
+		})
+	}
 	s.refreshPluginModelRegistrations(ctx)
 	s.coreManager.RefreshSchedulerAll()
 }
 
 func (s *Service) refreshPluginModelRegistrations(ctx context.Context) {
-	if s == nil || s.pluginHost == nil || s.coreManager == nil {
+	if s == nil || s.coreManager == nil {
 		return
 	}
 	s.registerModelsForAuthBatch(ctx, s.coreManager.List())
@@ -1704,6 +1706,15 @@ func (s *Service) Run(ctx context.Context) error {
 			if errRestoreCooldown := s.coreManager.RestoreCooldownStates(ctx); errRestoreCooldown != nil {
 				log.Warnf("failed to restore cooldown state: %v", errRestoreCooldown)
 			}
+		}
+		// Ensure every auth rehydrated from disk has its model catalog
+		// bound to the global registry. Without this step, providers
+		// not backed by a plugin host (e.g. trae-cn, codebuddy, kiro,
+		// cursor, ...) only get executors installed and the
+		// management UI ends up displaying "该凭证暂无可用模型" for
+		// every on-disk OAuth credential.
+		if auths := s.coreManager.List(); len(auths) > 0 {
+			s.registerModelsForAuthBatch(ctx, auths)
 		}
 	}
 
