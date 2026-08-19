@@ -1,0 +1,20 @@
+{
+  "kind": "webpage_snapshot",
+  "url": "https://github.com/kenuoseclab/trae-local-api",
+  "final_url": "https://github.com/kenuoseclab/trae-local-api",
+  "status": 200,
+  "read_status": "blocked",
+  "content_type": "text/html; charset=utf-8",
+  "fetched_at": "2026-08-19T13:33:32.236931800+00:00",
+  "title": "GitHub - kenuoseclab/trae-local-api: Trae CN to OpenAI/Anthropic compatible API proxy - auto-decrypt tc encrypted auth · GitHub",
+  "description": "Trae CN to OpenAI/Anthropic compatible API proxy - auto-decrypt tc encrypted auth - kenuoseclab/trae-local-api",
+  "site_name": "GitHub",
+  "published_at": null,
+  "source_type": "source_repo",
+  "text": "",
+  "quote_candidates": [],
+  "word_count": 0,
+  "truncated": false,
+  "blocked": true,
+  "source": "direct_http"
+}
