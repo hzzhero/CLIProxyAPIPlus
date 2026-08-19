@@ -430,7 +430,7 @@ func (a *TraeCNAuthenticator) buildAuthRecord(
 			"region_id":    regionID(endpoints, callback.LoginRegion, ex.UsedOrigin),
 			"base_url":     compatBaseURL,
 			"api_key":      accessToken,
-			"header:x-cloudide-token": accessToken,
+			"header:x-cloudide-token": accessToken
 		},
 	}, nil
 }
