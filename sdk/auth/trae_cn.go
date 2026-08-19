@@ -160,16 +160,49 @@ func (a *TraeCNAuthenticator) Login(ctx context.Context, cfg *config.Config, opt
 		}
 	}
 
-	log.Debug("trae-cn auth: exchange complete, fetching user info")
-
-	infoOrigins := []string{exchangeRes.UsedOrigin}
-	if effectiveHost != "" && effectiveHost != exchangeRes.UsedOrigin {
-		infoOrigins = append([]string{effectiveHost}, infoOrigins...)
-	}
-	userInfo, err := authSvc.GetUserInfo(ctx, infoOrigins, exchangeRes.Resp.AccessToken)
-	if err != nil {
-		log.Debugf("trae-cn auth: GetUserInfo non-fatal failure: %v", err)
-		userInfo = &trae.UserInfoResponse{}
+	// ------------------------------
+	// User info resolution strategy
+	// ------------------------------
+	// 1. The CN redirect carries a complete userInfo JSON inside the
+	//    callback parameters. Use it first — it avoids the extra
+	//    GetUserInfo RPC (which needs additional permissions and is the
+	//    source of the user's reported "login failed even though auth
+	//    code exists" issue).
+	// 2. Fallback to GetUserInfo when the callback did not include
+	//    userInfo (e.g. older flows or non-CN regions).
+	// 3. If GetUserInfo fails we still log the error but continue so
+	//    the user's auth can be saved.
+	var userInfo *trae.UserInfoResponse
+	fromCb := trae.ParseUserInfoFromCallback(callback)
+	if fromCb != nil && fromCb.UserID != "" && fromCb.Nickname != "" {
+		userInfo = fromCb
+		log.Debug("trae-cn auth: using userInfo from callback (skipped GetUserInfo RPC)")
+	} else {
+		log.Debug("trae-cn auth: callback missing userInfo, fetching via GetUserInfo")
+		infoOrigins := []string{exchangeRes.UsedOrigin}
+		if effectiveHost != "" && effectiveHost != exchangeRes.UsedOrigin {
+			infoOrigins = append([]string{effectiveHost}, infoOrigins...)
+		}
+		remote, errInfo := authSvc.GetUserInfo(ctx, infoOrigins, exchangeRes.Resp.AccessToken)
+		if errInfo != nil {
+			log.Debugf("trae-cn auth: GetUserInfo non-fatal failure: %v", errInfo)
+			userInfo = &trae.UserInfoResponse{}
+		} else {
+			userInfo = remote
+		}
+		// Merge any fields we can salvage from callback userInfo
+		// (sometimes GetUserInfo is partial and callback has extras).
+		if fromCb != nil {
+			if userInfo.UserID == "" {
+				userInfo.UserID = fromCb.UserID
+			}
+			if userInfo.Nickname == "" {
+				userInfo.Nickname = fromCb.Nickname
+			}
+			if userInfo.Email == "" {
+				userInfo.Email = fromCb.Email
+			}
+		}
 	}
 
 	return a.buildAuthRecord(dc, endpoints, callback, exchangeRes, userInfo)
@@ -274,12 +307,15 @@ func (a *TraeCNAuthenticator) waitForCallback(ctx context.Context, opts *LoginOp
 // inputs: full URLs, bare query strings, fragment strings.
 //
 // Returns nil for blank input so the wait loop can continue waiting.
+//
+// NOTE: All extraction semantics are delegated to trae.ParseCallbackFromURL
+// (single source of truth). This function only normalizes user input into
+// a parseable *url.URL.
 func parseManualTraeCallback(input string) *trae.CallbackParams {
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return nil
 	}
-	// Normalize to something url.Parse can handle
 	candidate := input
 	if !strings.Contains(candidate, "://") {
 		if strings.HasPrefix(candidate, "?") || strings.HasPrefix(candidate, "#") {
@@ -294,49 +330,7 @@ func parseManualTraeCallback(input string) *trae.CallbackParams {
 	if err != nil {
 		return nil
 	}
-	params := make(map[string]string)
-	for k, vs := range u.Query() {
-		if len(vs) > 0 && strings.TrimSpace(vs[0]) != "" {
-			params[k] = strings.TrimSpace(vs[0])
-		}
-	}
-	if u.Fragment != "" {
-		rawFrag := strings.TrimPrefix(u.Fragment, "?")
-		if frag, err := url.ParseQuery(rawFrag); err == nil {
-			for k, vs := range frag {
-				if len(vs) > 0 && strings.TrimSpace(vs[0]) != "" {
-					if _, exists := params[k]; !exists {
-						params[k] = strings.TrimSpace(vs[0])
-					}
-				}
-			}
-		}
-	}
-	// Use existing helper pick via reparse — reuse oauth_server's
-	// extraction logic by reimplementing the same picks inline.
-	pick := func(keys ...string) string {
-		for _, k := range keys {
-			if v, ok := params[k]; ok && strings.TrimSpace(v) != "" {
-				return strings.TrimSpace(v)
-			}
-		}
-		return ""
-	}
-	cb := &trae.CallbackParams{RawQuery: params}
-	errCode := pick("error", "errorCode", "error_code", "err")
-	if errCode != "" {
-		cb.Error = errCode
-		cb.ErrorDescription = pick("error_description", "errorDescription", "message")
-		return cb
-	}
-	cb.RefreshToken = pick("refreshToken", "refresh_token", "RefreshToken")
-	cb.AuthCode = pick("authCode", "auth_code", "AuthCode", "authorization_code", "code")
-	cb.LoginHost = pick("loginHost", "login_host", "LoginHost", "host")
-	cb.LoginRegion = pick("loginRegion", "login_region", "region", "Region", "userRegion", "UserRegion")
-	cb.LoginTraceID = pick("loginTraceID", "loginTraceId", "login_trace_id", "trace_id")
-	cb.CloudIDEToken = pick("x-cloudide-token", "xCloudideToken", "accessToken", "access_token", "token")
-	cb.UserTag = pick("userTag", "user_tag", "UserTag")
-	return cb
+	return trae.ParseCallbackFromURL(u)
 }
 
 // buildAuthRecord assembles the final coreauth.Auth from the results

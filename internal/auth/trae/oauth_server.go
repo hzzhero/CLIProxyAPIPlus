@@ -2,13 +2,11 @@ package trae
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
 	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -129,43 +127,34 @@ func (s *OAuthServer) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	params := mergeQueryAndFragment(r.URL)
+	cb := ParseCallbackFromURL(r.URL)
+	if cb == nil {
+		writeHTML(w, http.StatusOK, callbackPendingHTML())
+		return
+	}
 
-	errCode := pick(params,
-		"error", "error_code", "err", "errorCode")
-	errDesc := pick(params,
-		"error_description", "error_desc", "errorDescription", "message")
-	if errCode != "" {
-		msg := errCode
-		if errDesc != "" {
-			msg = fmt.Sprintf("%s (%s)", errCode, errDesc)
+	if cb.Error != "" {
+		msg := cb.Error
+		if cb.ErrorDescription != "" {
+			msg = fmt.Sprintf("%s (%s)", cb.Error, cb.ErrorDescription)
 		}
 		log.Warnf("trae oauth server: callback error %s", msg)
-		s.sendCallback(&CallbackParams{Error: errCode, ErrorDescription: errDesc, RawQuery: params})
+		s.sendCallback(cb)
 		writeHTML(w, http.StatusBadRequest, callbackFailureHTML(msg))
 		return
 	}
 
-	refreshToken := pick(params,
-		"refreshToken", "refresh_token", "RefreshToken", "refresh-token")
-	authCode := extractAuthCode(params)
-
-	// If neither token payload is present we may be on the first hop of
-	// a fragment-encoded callback — render the pending page which
-	// rewrites the hash to query and redirects back.
-	if refreshToken == "" && authCode == "" {
+	if cb.AuthCode == "" && cb.RefreshToken == "" {
 		if r.URL.RawQuery == "" && r.URL.Fragment == "" {
-			// Completely empty — just serve the pending page (will sit
-			// and report "missing parameters").
 			writeHTML(w, http.StatusOK, callbackPendingHTML())
 			return
 		}
-		// Any query string but no usable parameters is treated as
-		// terminal: report the missing payload.
 		if r.URL.Fragment == "" {
 			msg := "callback missing authCode/authCodeInfo or refreshToken"
-			log.Warnf("trae oauth server: %s (params=%v)", msg, params)
-			s.sendCallback(&CallbackParams{Error: "missing_payload", ErrorDescription: msg, RawQuery: params})
+			log.Warnf("trae oauth server: %s (params=%v)", msg, cb.RawQuery)
+			cb.Error = "missing_payload"
+			cb.ErrorDescription = msg
+			s.sendCallback(cb)
 			writeHTML(w, http.StatusBadRequest, callbackFailureHTML(msg))
 			return
 		}
@@ -173,19 +162,6 @@ func (s *OAuthServer) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	loginHost := pick(params,
-		"loginHost", "login_host", "LoginHost", "host", "consoleHost")
-
-	cb := &CallbackParams{
-		AuthCode:      authCode,
-		RefreshToken:  refreshToken,
-		LoginHost:     loginHost,
-		LoginRegion:   pick(params, "loginRegion", "login_region", "region", "Region", "userRegion", "user_region", "UserRegion", "AIRegion", "aiRegion", "storeRegion", "StoreRegion"),
-		LoginTraceID:  pick(params, "loginTraceID", "loginTraceId", "login_trace_id", "trace_id"),
-		CloudIDEToken: extractCloudIDEToken(params),
-		UserTag:       pick(params, "userTag", "user_tag", "UserTag"),
-		RawQuery:      params,
-	}
 	s.sendCallback(cb)
 	writeHTML(w, http.StatusOK, callbackSuccessHTML())
 }
@@ -199,127 +175,6 @@ func (s *OAuthServer) sendCallback(cb *CallbackParams) {
 	default:
 		log.Warn("trae oauth server: resultChan full (already delivered); dropping duplicate callback")
 	}
-}
-
-// ---------------------------------------------------------------------------
-// Parameter helpers
-// ---------------------------------------------------------------------------
-
-// mergeQueryAndFragment flattens both query string and URL fragment into
-// a single map. Fragment keys do NOT overwrite query keys (already
-// decoded values win) — this matches the cockpit-tools precedence rule.
-func mergeQueryAndFragment(u *url.URL) map[string]string {
-	result := make(map[string]string)
-	for key, values := range u.Query() {
-		if len(values) > 0 && strings.TrimSpace(values[0]) != "" {
-			result[key] = strings.TrimSpace(values[0])
-		}
-	}
-	if u.Fragment != "" {
-		// Fragments can be either "key=val&..." or prefixed with "?"
-		raw := strings.TrimPrefix(u.Fragment, "?")
-		if fragValues, err := url.ParseQuery(raw); err == nil {
-			for key, values := range fragValues {
-				if len(values) > 0 && strings.TrimSpace(values[0]) != "" {
-					if _, exists := result[key]; !exists {
-						result[key] = strings.TrimSpace(values[0])
-					}
-				}
-			}
-		}
-	}
-	return result
-}
-
-// pick returns the first non-empty value from params under any of the
-// supplied keys (case-sensitive, matches cockpit-tools).
-func pick(params map[string]string, keys ...string) string {
-	for _, k := range keys {
-		if v, ok := params[k]; ok && strings.TrimSpace(v) != "" {
-			return strings.TrimSpace(v)
-		}
-	}
-	return ""
-}
-
-// extractAuthCode returns the authorization code if present. It
-// handles both flat "authCode" / "code" parameters as well as
-// the nested "authCodeInfo" JSON envelope Trae sometimes sends.
-func extractAuthCode(params map[string]string) string {
-	if direct := pick(params, "authCode", "auth_code", "AuthCode", "authorization_code", "code"); direct != "" {
-		return direct
-	}
-	rawInfo := pick(params, "authCodeInfo", "auth_code_info", "AuthCodeInfo")
-	if rawInfo == "" {
-		return ""
-	}
-	var info map[string]any
-	if err := json.Unmarshal([]byte(rawInfo), &info); err != nil {
-		log.Debugf("trae oauth server: ignoring invalid authCodeInfo JSON (%v)", err)
-		return ""
-	}
-	for _, path := range [][]string{
-		{"AuthCode"}, {"authCode"}, {"auth_code"}, {"code"},
-		{"Result", "AuthCode"}, {"result", "authCode"},
-	} {
-		if v, ok := digString(info, path); ok && v != "" {
-			return v
-		}
-	}
-	return ""
-}
-
-// extractCloudIDEToken returns the bearer token when Trae sends a
-// shortcut access token instead of requiring code exchange. It also
-// handles the "userJwt" nested JSON case.
-func extractCloudIDEToken(params map[string]string) string {
-	if direct := pick(params, "x-cloudide-token", "xCloudideToken", "accessToken", "access_token", "token"); direct != "" {
-		return direct
-	}
-	userJwt := pick(params, "userJwt", "user_jwt")
-	if userJwt == "" {
-		return ""
-	}
-	var parsed map[string]any
-	if err := json.Unmarshal([]byte(userJwt), &parsed); err != nil {
-		return ""
-	}
-	for _, path := range [][]string{
-		{"Token"}, {"token"}, {"AccessToken"}, {"accessToken"}, {"access_token"},
-	} {
-		if v, ok := digString(parsed, path); ok && v != "" {
-			return v
-		}
-	}
-	return ""
-}
-
-// digString traverses nested map[string]any nodes and returns a string
-// value if the leaf exists and is a string (or numeric, converted).
-func digString(root map[string]any, path []string) (string, bool) {
-	var current any = root
-	for _, p := range path {
-		m, ok := current.(map[string]any)
-		if !ok {
-			return "", false
-		}
-		next, exists := m[p]
-		if !exists {
-			return "", false
-		}
-		current = next
-	}
-	switch v := current.(type) {
-	case string:
-		return strings.TrimSpace(v), true
-	case float64:
-		return fmt.Sprintf("%d", int64(v)), true
-	case int64:
-		return fmt.Sprintf("%d", v), true
-	case int:
-		return fmt.Sprintf("%d", v), true
-	}
-	return "", false
 }
 
 // writeHTML writes an HTML response with the appropriate Content-Type.
