@@ -183,7 +183,7 @@ func (t *TraeAuth) BuildAuthURL(loginHost, loginTraceID, callbackURL, codeChalle
 	if isSolo {
 		set("auth_from", "solo")
 	} else {
-		set("auth_from", "trae")
+		set("auth_from", "trae-cn")
 	}
 	set("login_channel", "native_ide")
 	set("plugin_version", dc.PluginVersion)

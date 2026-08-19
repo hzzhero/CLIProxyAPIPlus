@@ -125,7 +125,7 @@ func (ts *TraeTokenStorage) SetMetadata(meta map[string]any) {
 // SaveTokenToFile serializes the Trae token storage to a JSON file.
 func (ts *TraeTokenStorage) SaveTokenToFile(authFilePath string) error {
 	misc.LogSavingCredentials(authFilePath)
-	ts.Type = "trae"
+	ts.Type = "trae-cn"
 	if ts.Provider == "" {
 		ts.Provider = "trae-cn"
 	}
