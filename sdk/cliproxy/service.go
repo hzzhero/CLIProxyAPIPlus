@@ -1128,6 +1128,12 @@ func (s *Service) registerExecutorForAuth(a *coreauth.Auth, forceReplace bool) {
 		s.coreManager.RegisterExecutor(executor.NewGitHubCopilotExecutor(s.cfg))
 	case "codebuddy":
 		s.coreManager.RegisterExecutor(executor.NewCodeBuddyExecutor(s.cfg))
+	case "trae-cn":
+		// Trae CN exposes a standard OpenAI-compatible chat
+		// (https://api.trae.com.cn/v1/chat/completions) so we route it
+		// through the generic OpenAICompatExecutor, which already
+		// handles auth header lookup and model forwarding.
+		s.coreManager.RegisterExecutor(executor.NewOpenAICompatExecutor("trae-cn", s.cfg))
 	case "gitlab":
 		s.coreManager.RegisterExecutor(executor.NewGitLabExecutor(s.cfg))
 	case "qoder":
@@ -2107,6 +2113,9 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 		models = applyExcludedModels(models, excluded)
 	case "codebuddy":
 		models = registry.GetCodeBuddyModels()
+		models = applyExcludedModels(models, excluded)
+	case "trae-cn":
+		models = registry.GetTraeCNModels()
 		models = applyExcludedModels(models, excluded)
 	case "qoder":
 		models = executor.FetchQoderModels(context.Background(), a, s.cfg)
