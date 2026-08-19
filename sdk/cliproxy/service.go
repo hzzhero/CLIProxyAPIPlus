@@ -2161,6 +2161,8 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 		models = applyExcludedModels(models, excluded)
 	case "trae-cn":
 		models = registry.GetTraeCNModels()
+	case "trae":
+		models = registry.GetTraeCNModels()
 	case "qoder":
 		models = executor.FetchQoderModels(context.Background(), a, s.cfg)
 		models = applyExcludedModels(models, excluded)
