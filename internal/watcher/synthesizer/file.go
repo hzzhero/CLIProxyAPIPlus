@@ -211,6 +211,33 @@ func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) []
 			}
 		}
 	}
+	// Trae-family credentials (type=trae, provider=trae-cn / trae) are
+	// routed through the generic OpenAICompatExecutor at runtime. That
+	// executor resolves its upstream via auth.Attributes["base_url"]
+	// and returns "missing provider baseURL" when the key is absent.
+	// Because the JSON on-disk format stores the token + gateway host
+	// in the top-level metadata (access_token / account_api_host),
+	// we must backfill the derived Attributes after every file reload /
+	// hot-reload so previously persisted credentials keep working even
+	// if the Login() path that originally wrote them was an older build
+	// that did not emit compat Attributes.
+	if provider == "trae" || provider == "trae-cn" {
+		host, _ := metadata["account_api_host"].(string)
+		token, _ := metadata["access_token"].(string)
+		host = strings.TrimSpace(host)
+		token = strings.TrimSpace(token)
+		if host != "" {
+			a.Attributes["base_url"] = strings.TrimRight(host, "/") + "/v1"
+		}
+		if token != "" {
+			a.Attributes["api_key"] = token
+			a.Attributes["header:x-cloudide-token"] = token
+		}
+		a.Attributes["provider_key"] = a.Provider
+		if strings.EqualFold(a.Provider, "trae-cn") || strings.EqualFold(a.Provider, "trae") {
+			a.Attributes["compat_name"] = "trae-cn"
+		}
+	}
 	if provider == "qoder" || provider == "qoder-cn" {
 		// Deserialize the on-disk JSON directly into the storage struct so
 		// every persisted field — including the cached model_configs map

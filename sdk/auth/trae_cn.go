@@ -405,18 +405,38 @@ func (a *TraeCNAuthenticator) buildAuthRecord(
 	}
 	fmt.Printf("  凭证文件: auths/%s\n", fileName)
 
+	// OpenAICompatExecutor resolves its upstream base URL and bearer
+	// token from the auth Attributes (base_url / api_key). If base_url
+	// is missing the executor aborts every request with
+	// "missing provider baseURL", so we must populate them here. The
+	// OpenAI-compatible gateway lives under the exchange origin at
+	// /v1 (e.g. https://api.trae.com.cn/v1). The bearer token is the
+	// OAuth access token; we also mirror it into the x-cloudide-token
+	// header because the CN gateway may validate it as a secondary
+	// authentication signal.
+	gatewayBase := strings.TrimRight(strings.TrimSpace(ex.UsedOrigin), "/") + "/v1"
+	accessToken := strings.TrimSpace(ex.Resp.AccessToken)
+	compatName := "trae-cn"
+
+	attrs := map[string]string{
+		"email":                   info.Email,
+		"nickname":                info.Nickname,
+		"login_region":            callback.LoginRegion,
+		"region_id":               regionID(endpoints, callback.LoginRegion, ex.UsedOrigin),
+		"base_url":                gatewayBase,
+		"api_key":                 accessToken,
+		"header:x-cloudide-token": accessToken,
+		"compat_name":             compatName,
+		"provider_key":            a.Provider(),
+	}
+
 	return &coreauth.Auth{
-		ID:       fileName,
-		Provider: a.Provider(),
-		FileName: fileName,
-		Storage:  storage,
-		Metadata: metadata,
-		Attributes: map[string]string{
-			"email":        info.Email,
-			"nickname":     info.Nickname,
-			"login_region": callback.LoginRegion,
-			"region_id":    regionID(endpoints, callback.LoginRegion, ex.UsedOrigin),
-		},
+		ID:         fileName,
+		Provider:   a.Provider(),
+		FileName:   fileName,
+		Storage:    storage,
+		Metadata:   metadata,
+		Attributes: attrs,
 	}, nil
 }
 

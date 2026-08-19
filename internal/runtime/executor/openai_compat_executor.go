@@ -57,6 +57,21 @@ func (e *OpenAICompatExecutor) PrepareRequest(req *http.Request, auth *cliproxya
 	_, apiKey := e.resolveCredentials(auth)
 	if strings.TrimSpace(apiKey) != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
+		// Trae CN gateways sometimes additionally require the raw
+		// access token mirrored into the x-cloudide-token header. If
+		// the auth record did not surface it via the explicit
+		// "header:x-cloudide-token" attribute, mirror the bearer token
+		// here so the request still validates on rehydrated legacy
+		// credentials that only carry metadata.access_token.
+		if auth != nil {
+			explicit := ""
+			if auth.Attributes != nil {
+				explicit = strings.TrimSpace(auth.Attributes["header:x-cloudide-token"])
+			}
+			if explicit == "" {
+				req.Header.Set("x-cloudide-token", apiKey)
+			}
+		}
 	}
 	var attrs map[string]string
 	if auth != nil {
@@ -740,6 +755,40 @@ func (e *OpenAICompatExecutor) resolveCredentials(auth *cliproxyauth.Auth) (base
 	if auth.Attributes != nil {
 		baseURL = strings.TrimSpace(auth.Attributes["base_url"])
 		apiKey = strings.TrimSpace(auth.Attributes["api_key"])
+	}
+	// Defense-in-depth fallback: older OAuth flows (or providers whose
+	// on-disk format only writes tokens into the Metadata map) may not
+	// expose base_url / api_key via Attributes. Derive them from
+	// metadata so the executor never fails with the cryptic
+	// "missing provider baseURL" just because the rehydration path
+	// skipped the Attributes backfill above.
+	if baseURL == "" || apiKey == "" {
+		meta := auth.Metadata
+		if meta != nil {
+			if baseURL == "" {
+				if host, ok := meta["account_api_host"].(string); ok {
+					host = strings.TrimSpace(host)
+					if host != "" {
+						baseURL = strings.TrimRight(host, "/") + "/v1"
+					}
+				}
+				if baseURL == "" {
+					if v, ok := meta["base_url"].(string); ok {
+						baseURL = strings.TrimSpace(v)
+					}
+				}
+			}
+			if apiKey == "" {
+				if v, ok := meta["access_token"].(string); ok {
+					apiKey = strings.TrimSpace(v)
+				}
+				if apiKey == "" {
+					if v, ok := meta["api_key"].(string); ok {
+						apiKey = strings.TrimSpace(v)
+					}
+				}
+			}
+		}
 	}
 	return
 }
