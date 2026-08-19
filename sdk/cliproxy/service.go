@@ -1714,7 +1714,41 @@ func (s *Service) Run(ctx context.Context) error {
 		// management UI ends up displaying "该凭证暂无可用模型" for
 		// every on-disk OAuth credential.
 		if auths := s.coreManager.List(); len(auths) > 0 {
+			providers := make([]string, 0, len(auths))
+			for _, a := range auths {
+				if a == nil {
+					continue
+				}
+				providers = append(providers, fmt.Sprintf("%s=%s", a.ID, a.Provider))
+			}
+			log.Infof("auth store rehydrated %d credentials; registering model catalogs: %v", len(auths), providers)
 			s.registerModelsForAuthBatch(ctx, auths)
+			for _, a := range auths {
+				if a == nil {
+					continue
+				}
+				models := registry.GetGlobalRegistry().GetModelsForClient(a.ID)
+				modelIDs := make([]string, 0, len(models))
+				for _, m := range models {
+					if m != nil {
+						modelIDs = append(modelIDs, m.ID)
+					}
+				}
+				if len(modelIDs) == 0 {
+					log.Warnf("auth %q (provider=%s) has zero models bound after startup registration; "+
+						"the credential directory (%q) may not match the one used during login, "+
+						"or the provider may be missing from resolveModelsForAuth/resolveProviderExecutorForAuth",
+						a.ID, a.Provider, s.cfg.AuthDir)
+				} else {
+					log.Infof("auth %q (provider=%s) bound %d models: %v", a.ID, a.Provider, len(modelIDs), modelIDs)
+				}
+			}
+		} else {
+			log.Warnf("auth store rehydrated zero credentials; if you previously logged in with --trae-cn-login, "+
+				"check that the container-mounted credential directory (%q) matches the host directory "+
+				"where the login command saved the token file. Default login dir on host is ~/.cli-proxy-api "+
+				"while docker-compose.yml mounts ./auths into the container.",
+				s.cfg.AuthDir)
 		}
 	}
 
